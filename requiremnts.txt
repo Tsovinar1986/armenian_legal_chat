@@ -1,0 +1,27 @@
+# Core Logic & Concurrency
+pandas
+numpy
+
+# Computer Vision
+opencv-python
+mediapipe
+ultralytics
+Pillow  
+
+# AI & LLM Orchestration
+langchain
+langchain-community
+langchain-ollama
+langchain-chroma
+
+# Database
+chromadb
+
+# Voice (STT & TTS)
+SpeechRecognition
+pyttsx3
+PyAudio
+
+# Utilities
+openpyxl
+pynput

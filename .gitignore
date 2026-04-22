@@ -1,0 +1,9 @@
+.DS_Store
+.vscode/
+rag_env/
+chroma_legal_data/
+*.gguf
+*.xlsx~
+__pycache__/
+*.pyc
+armenia_lawyer_router_gguf/
