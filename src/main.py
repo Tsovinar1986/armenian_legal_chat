@@ -1,8 +1,7 @@
 import sys
 import os
-import threading
 import cv2
-from pynput import keyboard  # High-efficiency key listener
+from pynput import keyboard 
 
 # --- Path Configuration ---
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -29,10 +28,9 @@ class LegalAIController:
         self.voice = voice
         self.agent = agent
         self.ingestor = ingestor
-        self.cap = None
 
     def handle_upload(self):
-        """Manual trigger for ingestion."""
+        """Manual trigger for file ingestion."""
         print("\n📂 [TRIGGER] Enter full path to legal file:")
         file_path = input(">>> ").strip()
         if os.path.exists(file_path):
@@ -44,7 +42,6 @@ class LegalAIController:
     def handle_mic(self):
         """Manual trigger for voice processing."""
         print("\n🎤 [TRIGGER] Listening now...")
-        # Uses your voice service for a single capture
         user_speech = self.voice.listen_once() 
         if user_speech:
             print(f"👤 User: {user_speech}")
@@ -52,20 +49,13 @@ class LegalAIController:
             print(f"⚖️ AI: {response}")
             self.voice.speak(response)
 
-    def toggle_vision(self):
-        """Toggles webcam to save RAM/CPU."""
-        self.state.webcam_active = not getattr(self.state, 'webcam_active', False)
-        mode = "ON" if self.state.webcam_active else "OFF"
-        print(f"\n📷 [TRIGGER] Vision Mode: {mode}")
-        if not self.state.webcam_active:
-            cv2.destroyAllWindows()
-
 def main():
-    print("⚖️ Armenian Legal AI (Memory Optimized for Mac)")
+    print("⚖️ Armenian Legal AI (Webcam Active)")
     
     # 1. Resource-Efficient Initialization
     state = SystemState()
-    state.webcam_active = False 
+    # CHANGED: Set webcam to True by default
+    state.webcam_active = True 
     state.is_running = True
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
@@ -80,12 +70,12 @@ def main():
         IngestionService(vector_db)
     )
 
-    # 2. Keyboard Listener Thread (Very low RAM usage)
+    # 2. Keyboard Listener Thread
     def on_press(key):
         try:
             if key.char == 'u': controller.handle_upload()
             if key.char == 'm': controller.handle_mic()
-            if key.char == 'v': controller.toggle_vision()
+            if key.char == "v": controller.toggle_vision()
             if key.char == 'q': 
                 state.is_running = False
                 return False 
@@ -95,32 +85,32 @@ def main():
     listener.start()
 
     print("\n⌨️  CONTROLS:")
-    print(" [V] Toggle Webcam | [M] Use Mic | [U] Upload File | [Q] Quit")
+    print(" [m] Use Mic | [u] Upload File | [v] Toggle Vision | [q] Quit")
 
-    # 3. Conditional Vision Loop
-    cap = cv2.VideoCapture(0)
-    
+    # 3. Vision Loop
+    cap = None 
+    window_name = "Legal AI Feed"
+
     try:
         while state.is_running:
-            if getattr(state, 'webcam_active', False):
-                ret, frame = cap.read()
-                if ret:
-                    controller.vision.process_frame(frame)
-                    # Overlay only if active to save processing
-                    actions = " | ".join(state.people_actions) if state.people_actions else "Passive"
-                    cv2.putText(frame, f"AI Vision: {actions}", (10, 30), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.imshow("Legal AI Feed", frame)
-                
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-            else:
-                # Idle state: reduce CPU usage to near 0%
-                cv2.waitKey(200) 
+            # The loop now assumes webcam is always intended to be on
+            if cap is None or not cap.isOpened():
+                cap = cv2.VideoCapture(0)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+            ret, frame = cap.read()
+            if ret:
+                frame = controller.vision.process_frame(frame)
+                cv2.imshow(window_name, frame)
+                cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+            
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                state.is_running = False
 
     finally:
-        state.is_running = False
-        cap.release()
+        if cap:
+            cap.release()
         cv2.destroyAllWindows()
         print("\n✅ System Shutdown Cleanly.")
 
