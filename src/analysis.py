@@ -74,6 +74,7 @@ def main() -> None:
             token_counter.update(tokenize_armenian_text(full_text))
 
     claim_counter = Counter([c for c in claim_types if c])
+
     sorted_text_lengths = sorted(text_lengths)
     sorted_word_counts = sorted(word_counts)
 
