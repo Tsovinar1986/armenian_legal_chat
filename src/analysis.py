@@ -8,10 +8,10 @@ from statistics import mean, median
 
 
 DATA_PATH = (
-    Path(__file__).resolve().parent / "data" / "legal_analysis_full_text.csv"
+    Path(__file__).resolve().parent / "data" / "legal_cases.csv"
 )
 OUTPUT_PATH = (
-    Path(__file__).resolve().parent / "data" / "legal_analysis_summary.json"
+    Path(__file__).resolve().parent / "data" / "legal_cases.json"
 )
 
 
