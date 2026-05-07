@@ -1,41 +1,97 @@
 import speech_recognition as sr
 import pyttsx3
 import queue
+import threading
+import time
 
 class VoiceService:
     def __init__(self, state):
-        # FIXED: Accept and store the shared state
         self.state = state
         self.input_queue = queue.Queue()
         
-        # Initialize Text-to-Speech
+        # Text-to-Speech
         self.engine = pyttsx3.init()
         self.engine.setProperty('rate', 150)
         
-        # Initialize Speech Recognition
+        # Speech Recognition
         self.recognizer = sr.Recognizer()
-        self.microphone = sr.Microphone()
+        self.microphone = None          # Will be set after device selection
+        self.current_device_index = None
 
-    def speak(self, text):
-        """Converts AI response text to Armenian speech."""
-        print(f"🔊 AI Speaking: {text}")
+        self.listening_thread = None
+        self.list_available_microphones()
+
+    def list_available_microphones(self):
+        """List all microphones and let user choose (especially useful for headphones)"""
+        print("\n🎤 Available Microphones:")
+        mic_list = sr.Microphone.list_microphone_names()
+        
+        for i, name in enumerate(mic_list):
+            print(f"  [{i}] {name}")
+        
+        print("\n💡 Plug in your headphones/earphones now if you want to use their mic.")
+        
+        try:
+            choice = input("Enter microphone number (or press Enter for default): ").strip()
+            if choice.isdigit():
+                self.current_device_index = int(choice)
+                self.microphone = sr.Microphone(device_index=self.current_device_index)
+                print(f"✅ Selected: {mic_list[self.current_device_index]}")
+            else:
+                self.microphone = sr.Microphone()  # default
+                print("✅ Using default microphone")
+        except Exception as e:
+            print(f"⚠️ Using default mic. Error: {e}")
+            self.microphone = sr.Microphone()
+
+    def speak(self, text: str):
+        print(f"🔊 AI: {text}")
         self.engine.say(text)
         self.engine.runAndWait()
 
-    def listen_loop(self):
-        """Background thread that listens for Armenian speech."""
-        with self.microphone as source:
-            self.recognizer.adjust_for_ambient_noise(source)
-            print("🎤 Microphone ready... (Listening for Armenian)")
+    def listen_once(self) -> str:
+        """Manual one-time listen"""
+        if not self.microphone:
+            self.microphone = sr.Microphone()
+
+        print("🎤 Listening... Speak now")
+        try:
+            with self.microphone as source:
+                self.recognizer.adjust_for_ambient_noise(source, duration=0.8)
+                audio = self.recognizer.listen(source, timeout=7, phrase_time_limit=10)
             
-            while self.state.is_running:
-                try:
-                    audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=5)
-                    # Use 'hy-AM' for Armenian language recognition
-                    text = self.recognizer.recognize_google(audio, language="hy-AM")
-                    if text:
-                        self.input_queue.put(text)
-                except sr.UnknownValueError:
-                    pass # Ignore noise
-                except Exception as e:
-                    print(f"🎙️ Voice Error: {e}")
+            text = self.recognizer.recognize_google(audio, language="hy-AM")
+            print(f"👤 You said: {text}")
+            return text.strip()
+            
+        except sr.UnknownValueError:
+            print("❌ Sorry, I didn't catch that.")
+            return ""
+        except sr.RequestError as e:
+            print(f"❌ Google Speech service error: {e}")
+            return ""
+        except Exception as e:
+            print(f"🎙️ Mic error: {e}")
+            return ""
+
+    def start_background_listener(self):
+        if self.listening_thread and self.listening_thread.is_alive():
+            return
+        self.listening_thread = threading.Thread(target=self._listen_loop, daemon=True)
+        self.listening_thread.start()
+        print("🎤 Background voice listener started")
+
+    def _listen_loop(self):
+        print("🎤 Background listening ready...")
+        while self.state.is_running:
+            try:
+                with self.microphone as source:
+                    self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                    audio = self.recognizer.listen(source, timeout=None, phrase_time_limit=6)
+                
+                text = self.recognizer.recognize_google(audio, language="hy-AM")
+                if text and text.strip():
+                    self.input_queue.put(text.strip())
+                    print(f"📥 Heard: {text}")
+            except:
+                time.sleep(0.3)

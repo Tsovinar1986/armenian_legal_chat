@@ -2,15 +2,13 @@ class CompanyLegalRepo:
     def __init__(self, vector_db):
         self.db = vector_db
 
-    def get_classified_evidence(self, query, category=None):
+    def get_classified_evidence(self, query, category=None, k=6):
         """
-        Retrieves the most relevant legal context.
-        If a category (like 'Criminal') is provided, it filters the search.
+        Retrieves relevant legal cases with metadata.
         """
-        search_args = {"k": 3}
+        search_args = {"k": k}
         if category:
             search_args["filter"] = {"category": category}
-            
-        # Similarity search returns the actual law snippets
+
         results = self.db.similarity_search(query, **search_args)
         return results

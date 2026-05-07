@@ -4,34 +4,48 @@ class LegalAgent:
     def __init__(self, repo, state):
         self.repo = repo
         self.state = state
-        # Initialize the Armenian LLM
-        self.llm = OllamaLLM(model="armenia_lawyer_router:latest")
+        self.llm = OllamaLLM(model="armenia_lawyer_router:latest", temperature=0.6)
 
-    def get_advice(self, user_query):
-        # 1. Real-time actions from the camera state
-        detected_actions = self.state.people_actions
-        
-        # 2. Combine actions and query for search
-        search_query = f"{user_query} {' '.join(detected_actions)}"
-        
-        # 3. Search the Repository (filtered by what was seen)
-        # We pass None for category to search everything, or filter if needed
-        docs = self.repo.get_classified_evidence(search_query, category=None)
-        context = "\n".join([d.page_content for d in docs])
+    def get_advice(self, user_query: str):
+        detected_actions = getattr(self.state, 'people_actions', [])
 
-        # 4. Your Armenian Prompt Logic
+        # Retrieve relevant cases
+        docs = self.repo.get_classified_evidence(user_query, category=None, k=6)
+
+        context = "\n\n".join([
+            f"📌 Գործ #{i+1} | {d.metadata.get('case_type', 'Ընդհանուր')}\n{d.page_content[:800]}..." 
+            for i, d in enumerate(docs)
+        ])
+
         prompt = f"""
-        Դուք ՀՀ իրավաբան եք:
-        Արձանագրված գործողություններ: {detected_actions}
-        Իրավական նախադեպեր: {context}
-        
-        Հարց: {user_query}
-        
-        Տվեք մասնագիտական խորհրդատվություն հայերենով: Եթե արձանագրվել է բռնություն (ապտակ/հրում), 
-        նշեք ՀՀ քրեական օրենսգրքի համապատասխան հոդվածները (օրինակ՝ 195):
+        Դուք Հայաստանի Հանրապետության փորձառու իրավաբան եք։
+
+        **Հարցը**: {user_query}
+        **Արձանագրված գործողություններ**: {detected_actions}
+
+        **Նմանատիպ դատական գործեր տվյալների բազայից**:
+        {context}
+
+        ---
+        Պատասխանեք հայերենով՝ խիստ կառուցվածքով:
+
+        1. **Գործի տեսակը**՝ (օրինակ՝ Ընտանեկան բռնություն, Գույքային վեճ, Աշխատանքային վեճ, Վնասի հատուցում և այլն)
+
+        2. **Նման դեպքեր մեր բազայում**՝ 
+           Մեր տվյալների բազայում այս տեսակի խնդրով կան մի քանի նախադեպեր։
+
+        3. **Ինչպես է լուծվել դատարանում**՝ 
+           - Գործ #1: ... (կարճ ամփոփում + ելքը՝ մեղադրել են / արդարացրել են / փոխհատուցում են սահմանել և այլն)
+
+        4. **Իրավական հիմքեր**՝ ՀՀ օրենսգրքերի համապատասխան հոդվածներ
+
+        5. **Խորհրդատվություն**՝ ինչ անել հիմա, քայլ առ քայլ
+
+        Պատասխանը պետք է լինի հստակ, մասնագիտական և օգտակար։
         """
-        
+
         try:
-            return self.llm.invoke(prompt)
+            response = self.llm.invoke(prompt)
+            return response.strip()
         except Exception as e:
-            return f"Error connecting to LLM: {e}"
+            return f"❌ Տեխնիկական խնդիր է առաջացել։ Խնդրում ենք փորձել կրկին։ ({str(e)})"
