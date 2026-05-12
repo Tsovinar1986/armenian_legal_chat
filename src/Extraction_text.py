@@ -2,7 +2,7 @@ import re
 import pandas as pd
 import os
 
-files = ['/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList1.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList2.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList3.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList4.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList51.txt']
+files = ['/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList1.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList2.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList3.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList4.txt', '/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/caseList51.txt','/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/verdicts.txt']
 all_data = []
 
 def extract_court_papers(file_path):
@@ -51,4 +51,4 @@ for f in files:
     if os.path.exists(f):
         all_data.extend(extract_court_papers(f))
 
-pd.DataFrame(all_data).to_csv('court_papers_full.csv', index=False, encoding='utf-8')
+pd.DataFrame(all_data).to_csv('/Users/tsovinarbabakhanyan/Desktop/Armenian Chat part/src/data/court_papers_full.csv', index=False, encoding='utf-8')
