@@ -1,27 +1,41 @@
-# Core Logic & Concurrency
-pandas
-numpy
+# =============================================================================
+# Armenian Legal AI — dependencies used across src/*.py and notebook/*.ipynb
+# Install: python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
+#          pip install -r requirements.txt
+# PyAudio often needs a system build chain; on macOS: brew install portaudio
+# =============================================================================
 
-# Computer Vision
-opencv-python
-mediapipe
-ultralytics
-Pillow  
+# --- Core data & Excel (ingestion, Keywords, Extraction_text, notebooks) ---
+numpy>=1.26
+pandas>=2.0
+openpyxl>=3.1
 
-# AI & LLM Orchestration
-langchain
-langchain-community
-langchain-ollama
-langchain-chroma
+# --- Computer vision (src/services/vision.py) ---
+opencv-python>=4.8
+# 0.10.31+ PyPI wheels omit mediapipe.solutions (Tasks-only); this project uses Pose solution API.
+mediapipe>=0.10.21,<0.10.31
+ultralytics>=8.0
+Pillow>=10.0
 
-# Database
-chromadb
+# --- RAG & LLM (src/main.py, src/agents/legal_agent.py, src/db/repository.py) ---
+chromadb>=0.4
+langchain-chroma>=0.1
+langchain-ollama>=0.1
 
-# Voice (STT & TTS)
-SpeechRecognition
-pyttsx3
-PyAudio
+# --- Voice I/O (src/services/voice.py) ---
+SpeechRecognition>=3.10
+pyttsx3>=2.90
+PyAudio>=0.2.14
+pynput>=1.7
 
-# Utilities
-openpyxl
-pynput
+# --- Notebooks: EDA & labeling (eda_armenian_full_document_text.ipynb, Labeling.ipynb) ---
+jupyter>=1.0
+ipywidgets>=8.0
+matplotlib>=3.8
+seaborn>=0.13
+nltk>=3.8
+
+# --- Notebooks: modeling (Modeling.ipynb, Modeling1.ipynb) ---
+sentence-transformers>=2.6
+scikit-learn>=1.4
+xgboost>=2.0
