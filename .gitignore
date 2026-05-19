@@ -7,3 +7,7 @@ chroma_legal_data/
 __pycache__/
 *.pyc
 armenia_lawyer_router_gguf/
+.venv/
+bin/
+src/data/final_data_with_keywords.csv
+src/data/final_data_with_keywords.xlsx

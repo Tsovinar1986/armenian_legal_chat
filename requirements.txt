@@ -17,6 +17,9 @@ mediapipe>=0.10.21,<0.10.31
 ultralytics>=8.0
 Pillow>=10.0
 
+# --- Case classifier (src/services/classifier.py) ---
+beautifulsoup4>=4.12
+
 # --- RAG & LLM (src/main.py, src/agents/legal_agent.py, src/db/repository.py) ---
 chromadb>=0.4
 langchain-chroma>=0.1
