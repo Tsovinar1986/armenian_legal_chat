@@ -1,3 +1,4 @@
+# main.py
 import sys
 import os
 import cv2
@@ -46,8 +47,11 @@ class LegalAIController:
         user_speech = self.voice.listen_once()
         if user_speech:
             print(f"\n👤 You: {user_speech}")
+            
+            # The agent evaluates if this closely matches a past case history
             response = self.agent.get_advice(user_speech)
-            print(f"⚖️ Legal AI: {response}")
+            
+            print(f"⚖️ Legal AI:\n{response}")
             self.voice.speak(response)
 
 
