@@ -5,7 +5,7 @@
 # PyAudio often needs a system build chain; on macOS: brew install portaudio
 # =============================================================================
 
-# --- Core data & Excel (ingestion, Keywords, Extraction_text, notebooks) ---
+# --- Core data & Excel (ingestion, Extraction_text, notebooks) ---
 numpy>=1.26
 pandas>=2.0
 openpyxl>=3.1

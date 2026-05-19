@@ -6,7 +6,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 
 - Interactive app (`src/main.py`): runs a desktop loop with a webcam preview and on-screen Armenian hints from pose and object detection, optional microphone questions via Google Speech Recognition (`hy-AM`), and answers from a local Ollama model grounded in a Chroma vector store. Press the documented keys to upload `.txt` case dumps or `.xlsx` rows and extend the knowledge base.
 
-- Data preparation under `src/`: scripts such as `Extraction_text.py` and `Keywords.py` turn raw `caseList`-style exports into tabular data and keyword-enriched spreadsheets. `analysis.py` reads a CSV of legal cases and writes a JSON summary (lengths, missing fields, frequent tokens).
+- Data preparation under `src/`: scripts such as `Extraction_text.py` turn raw `caseList`-style exports into tabular data. `analysis.py` reads a CSV of legal cases and writes a JSON summary (lengths, missing fields, frequent tokens).
 
 - Notebooks in `notebook/`: exploratory analysis on full Armenian document text, labeling helpers, and embedding plus classical ML experiments (`Modeling.ipynb`, `Modeling1.ipynb`) using sentence-transformers, scikit-learn, and XGBoost.
 
