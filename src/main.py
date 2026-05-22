@@ -29,13 +29,12 @@ import chromadb
 
 
 class LegalAIController:
-    def __init__(self, state, vision, voice, agent, ingestor, classifier):
+    def __init__(self, state, vision, voice, agent, ingestor):
         self.state = state
         self.vision = vision
         self.voice = voice
         self.agent = agent
         self.ingestor = ingestor
-        self.classifier = classifier
 
     def handle_upload(self):
         def upload_worker():
@@ -45,7 +44,7 @@ class LegalAIController:
                 print("⚠️ File not found. Please check the path.")
                 return
 
-            print("Processing file...")
+            print("Processing file and embedding into database...")
             status = self.ingestor.process_file(file_path)
             print(f"✅ {status}")
 
@@ -61,26 +60,20 @@ class LegalAIController:
                     with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                         doc_text = f.read()
 
-                print("🔍 Analyzing case patterns and looking for historical precedents...")
-                matched_case = self.classifier.find_similar_case(doc_text)
-
-                if matched_case:
-                    print("\n🎯 [CLASSIFIER MATCH FOUND]")
-                    print(f"   🔹 Classifier: {matched_case.get('civil_case_classifier')}")
-                    print(f"   🔹 Similar case: {matched_case.get('unique_number')}")
-                    print(f"   🔹 Link: {matched_case.get('link')}")
-                    lawyer = matched_case.get('lawyer_name')
-                    lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else "Not specified"
-                    print(f"   🔹 Suggested lawyer: {lawyer_display}")
-                else:
-                    print("\nℹ️ No similar classified historical precedent found.")
+                print("🔍 Analyzing case patterns using Centralized Agent...")
+                # Route text through the agent so it can leverage unified classification/RAG
+                response = self.agent.get_advice(doc_text)
+                print(f"\n⚖️ Legal AI Analysis:\n{response}")
+                
             except Exception as ex:
-                print(f"⚠️ Error during case classification: {ex}")
+                print(f"⚠️ Error during document pipeline routing: {ex}")
 
         threading.Thread(target=upload_worker, daemon=True).start()
 
     def handle_mic(self):
         def mic_worker():
+            # Prompt the user out loud / printed before listening
+            print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր: Խնդրում եմ ներկայացրեք ձեր իրավական հարցը...")
             user_speech = self.voice.listen_once()
             if user_speech:
                 print(f"\n👤 You: {user_speech}")
@@ -89,6 +82,20 @@ class LegalAIController:
                 self.voice.speak(response)
 
         threading.Thread(target=mic_worker, daemon=True).start()
+
+    def handle_typed_text(self):
+        def text_worker():
+            print("\n⌨️ Type your legal question/case description:")
+            user_input = input(">>> ").strip()
+            if user_input:
+                response = self.agent.get_advice(user_input)
+                print(f"\n⚖️ Legal AI:\n{response}")
+                try:
+                    self.voice.speak(response)
+                except Exception:
+                    pass
+
+        threading.Thread(target=text_worker, daemon=True).start()
 
 
 def main():
@@ -109,11 +116,13 @@ def main():
     voice_service = VoiceService(state)
     vision_service = LegalVisionService(state)
     classifier_service = LegalCaseClassifier(data_folder="data")
-    legal_agent = LegalAgent(CompanyLegalRepo(vector_db), state)
+    
+    # Injecting the classifier service inside the agent for universal fallback capabilities
+    legal_agent = LegalAgent(CompanyLegalRepo(vector_db), state, classifier=classifier_service)
     ingestor = IngestionService(vector_db)
 
     controller = LegalAIController(
-        state, vision_service, voice_service, legal_agent, ingestor, classifier_service
+        state, vision_service, voice_service, legal_agent, ingestor
     )
 
     try:
@@ -126,6 +135,8 @@ def main():
             if hasattr(key, 'char') and key.char:
                 if key.char == 'm':
                     controller.handle_mic()
+                elif key.char == 't':
+                    controller.handle_typed_text()
                 elif key.char == 'u':
                     controller.handle_upload()
                 elif key.char == 'q':
@@ -139,7 +150,8 @@ def main():
 
     print("\n🎮 CONTROLS:")
     print("   [m] → Speak (Microphone)")
-    print("   [u] → Upload legal document (with classifier matching)")
+    print("   [t] → Type your question manually")
+    print("   [u] → Upload legal document (File path)")
     print("   [q] → Quit\n")
 
     cap = None

@@ -48,7 +48,7 @@ From the project root so `src` imports resolve:
 python src/main.py
 ```
 
-Controls match the on-screen help: m for speak, u for upload path, q to quit and close the video window.
+Controls match the on-screen help: **m** speak, **t** type a question, **u** upload a document, **q** quit and close the video window.
 
 Vector data is stored under `./chroma_legal_data` by default.
 
