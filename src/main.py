@@ -1,6 +1,7 @@
 import sys
 import os
 import threading
+import time
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['GRPC_VERBOSITY'] = 'NONE'
@@ -61,7 +62,6 @@ class LegalAIController:
                         doc_text = f.read()
 
                 print("🔍 Analyzing case patterns using Centralized Agent...")
-                # Route text through the agent so it can leverage unified classification/RAG
                 response = self.agent.get_advice(doc_text)
                 print(f"\n⚖️ Legal AI Analysis:\n{response}")
                 
@@ -72,7 +72,6 @@ class LegalAIController:
 
     def handle_mic(self):
         def mic_worker():
-            # Prompt the user out loud / printed before listening
             print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր: Խնդրում եմ ներկայացրեք ձեր իրավական հարցը...")
             user_speech = self.voice.listen_once()
             if user_speech:
@@ -90,16 +89,33 @@ class LegalAIController:
             if user_input:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
-                try:
-                    self.voice.speak(response)
-                except Exception:
-                    pass
+                
+                # --- Interactive Voice Feedback ---
+                print("\n🔊 Would you like to hear the response read out loud? (y/n)")
+                speak_choice = input(">>> ").strip().lower()
+                if speak_choice == 'y':
+                    try:
+                        print("🎙️ Speaking...")
+                        self.voice.speak(response)
+                    except Exception as ex:
+                        print(f"⚠️ Voice playback error: {ex}")
+                else:
+                    print("🔇 Response kept as text.")
+                # ----------------------------------
 
         threading.Thread(target=text_worker, daemon=True).start()
 
 
 def main():
     print("⚖️ Armenian Legal AI System Starting...\n")
+
+    # Ensure the expected data folder exists so the classifier doesn't crash
+    if not os.path.exists("data"):
+        try:
+            os.makedirs("data")
+            print("📁 Created missing 'data' directory.")
+        except Exception as e:
+            print(f"⚠️ Could not create data directory: {e}")
 
     state = SystemState()
     state.webcam_active = True
@@ -117,7 +133,6 @@ def main():
     vision_service = LegalVisionService(state)
     classifier_service = LegalCaseClassifier(data_folder="data")
     
-    # Injecting the classifier service inside the agent for universal fallback capabilities
     legal_agent = LegalAgent(CompanyLegalRepo(vector_db), state, classifier=classifier_service)
     ingestor = IngestionService(vector_db)
 
@@ -156,23 +171,38 @@ def main():
 
     cap = None
     window_name = "Legal AI Feed"
+    print("🎥 Initializing webcam feed...")
 
     try:
         while state.is_running:
             if cap is None or not cap.isOpened():
                 cap = cv2.VideoCapture(0)
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                time.sleep(0.5)  # Warmup buffer for macOS hardware access
+                if cap.isOpened():
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-            ret, frame = cap.read()
-            if ret:
-                processed_frame = vision_service.process_frame(frame)
-                cv2.imshow(window_name, processed_frame)
-                cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+            if cap and cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    try:
+                        processed_frame = vision_service.process_frame(frame)
+                        cv2.imshow(window_name, processed_frame)
+                        cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+                    except Exception as vision_err:
+                        print(f"⚠️ Vision processing frame error: {vision_err}")
+                else:
+                    time.sleep(0.1)
+            else:
+                # Fallback delay if camera hardware is completely unavailable
+                time.sleep(0.1)
 
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 state.is_running = False
                 break
+                
+    except Exception as loop_error:
+        print(f"💥 Critical error in main loop: {loop_error}")
     finally:
         if cap:
             cap.release()
