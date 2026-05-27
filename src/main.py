@@ -38,55 +38,54 @@ class LegalAIController:
         self.ingestor = ingestor
 
     def handle_upload(self):
-        def upload_worker():
-            print("\n📂 Enter full path to legal document:")
-            file_path = input(">>> ").strip().strip('"\'')
-            if not os.path.exists(file_path):
-                print("⚠️ File not found. Please check the path.")
-                return
+        # Done synchronously in the main block now to prevent input stream corruption
+        print("\n📂 Enter full path to legal document:")
+        file_path = input(">>> ").strip().strip('"\'')
+        if not os.path.exists(file_path):
+            print("⚠️ File not found. Please check the path.")
+            return
 
-            print("Processing file and embedding into database...")
-            status = self.ingestor.process_file(file_path)
-            print(f"✅ {status}")
+        print("Processing file and embedding into database...")
+        status = self.ingestor.process_file(file_path)
+        print(f"✅ {status}")
 
-            try:
-                if file_path.endswith('.txt'):
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        doc_text = f.read()
-                elif file_path.endswith('.xlsx'):
-                    import pandas as pd
-                    df = pd.read_excel(file_path)
-                    doc_text = df.iloc[:, 0].astype(str).str.cat(sep=' ')
-                else:
-                    with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        doc_text = f.read()
+        try:
+            if file_path.endswith('.txt'):
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    doc_text = f.read()
+            elif file_path.endswith('.xlsx'):
+                import pandas as pd
+                df = pd.read_excel(file_path)
+                doc_text = df.iloc[:, 0].astype(str).str.cat(sep=' ')
+            else:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    doc_text = f.read()
 
-                print("🔍 Analyzing case patterns using Centralized Agent...")
-                response = self.agent.get_advice(doc_text)
-                print(f"\n⚖️ Legal AI Analysis:\n{response}")
-                
-            except Exception as ex:
-                print(f"⚠️ Error during document pipeline routing: {ex}")
-
-        threading.Thread(target=upload_worker, daemon=True).start()
+            print("🔍 Analyzing case patterns using Centralized Agent...")
+            response = self.agent.get_advice(doc_text)
+            print(f"\n⚖️ Legal AI Analysis:\n{response}")
+            
+        except Exception as ex:
+            print(f"⚠️ Error during document pipeline routing: {ex}")
 
     def handle_mic(self):
-        def mic_worker():
-            print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր: Խնդրում եմ ներկայացրեք ձեր իրավական հարցը...")
-            user_speech = self.voice.listen_once()
-            if user_speech:
-                print(f"\n👤 You: {user_speech}")
-                response = self.agent.get_advice(user_speech)
-                print(f"⚖️ Legal AI:\n{response}")
-                self.voice.speak(response)
-
-        threading.Thread(target=mic_worker, daemon=True).start()
+        print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր: Խնդրում եմ ներկայացրեք ձեր իրավական հարցը...")
+        user_speech = self.voice.listen_once()
+        if user_speech:
+            print(f"\n👤 You: {user_speech}")
+            print("🔍 Querying LLM and ChromaDB Vector Storage...")
+            response = self.agent.get_advice(user_speech)
+            print(f"\n⚖️ Legal AI:\n{response}")
+            self.voice.speak(response)
+        else:
+            print("⚠️ No audio detected.")
 
     def handle_typed_text(self):
-        def text_worker():
-            print("\n⌨️ Type your legal question/case description:")
-            user_input = input(">>> ").strip()
-            if user_input:
+        print("\n⌨️ Type your legal question/case description:")
+        user_input = input(">>> ").strip()
+        if user_input:
+            print("🔍 Processing your request, please wait...")
+            try:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
                 
@@ -101,15 +100,14 @@ class LegalAIController:
                         print(f"⚠️ Voice playback error: {ex}")
                 else:
                     print("🔇 Response kept as text.")
-                # ----------------------------------
-
-        threading.Thread(target=text_worker, daemon=True).start()
+            except Exception as e:
+                print(f"💥 Error retrieving agent response: {e}")
+        # ----------------------------------
 
 
 def main():
     print("⚖️ Armenian Legal AI System Starting...\n")
 
-    # Ensure the expected data folder exists so the classifier doesn't crash
     if not os.path.exists("data"):
         try:
             os.makedirs("data")
@@ -120,6 +118,9 @@ def main():
     state = SystemState()
     state.webcam_active = True
     state.is_running = True
+    
+    # Track the active menu action cleanly in the loop
+    state.current_action = None 
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")
@@ -148,15 +149,11 @@ def main():
     def on_press(key):
         try:
             if hasattr(key, 'char') and key.char:
-                if key.char == 'm':
-                    controller.handle_mic()
-                elif key.char == 't':
-                    controller.handle_typed_text()
-                elif key.char == 'u':
-                    controller.handle_upload()
-                elif key.char == 'q':
-                    state.is_running = False
-                    return False
+                if key.char in ['m', 't', 'u', 'q']:
+                    state.current_action = key.char
+                    if key.char == 'q':
+                        state.is_running = False
+                        return False
         except Exception:
             pass
 
@@ -175,9 +172,21 @@ def main():
 
     try:
         while state.is_running:
+            # Check if user flagged an interactive terminal action
+            if state.current_action:
+                action = state.current_action
+                state.current_action = None # Reset flag immediately
+                
+                if action == 'm':
+                    controller.handle_mic()
+                elif action == 't':
+                    controller.handle_typed_text()
+                elif action == 'u':
+                    controller.handle_upload()
+
             if cap is None or not cap.isOpened():
                 cap = cv2.VideoCapture(0)
-                time.sleep(0.5)  # Warmup buffer for macOS hardware access
+                time.sleep(0.5) 
                 if cap.isOpened():
                     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -192,11 +201,11 @@ def main():
                     except Exception as vision_err:
                         print(f"⚠️ Vision processing frame error: {vision_err}")
                 else:
-                    time.sleep(0.1)
+                    time.sleep(0.03) # Frame pacing
             else:
-                # Fallback delay if camera hardware is completely unavailable
-                time.sleep(0.1)
+                time.sleep(0.03)
 
+            # Check for CV2 key escape windows
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 state.is_running = False
                 break
