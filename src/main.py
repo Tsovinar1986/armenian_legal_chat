@@ -38,7 +38,6 @@ class LegalAIController:
         self.ingestor = ingestor
 
     def handle_upload(self):
-        # Done synchronously in the main block now to prevent input stream corruption
         print("\n📂 Enter full path to legal document:")
         file_path = input(">>> ").strip().strip('"\'')
         if not os.path.exists(file_path):
@@ -89,7 +88,7 @@ class LegalAIController:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
                 
-                # --- Interactive Voice Feedback ---
+                # --- Interactive Natural Voice Feedback ---
                 print("\n🔊 Would you like to hear the response read out loud? (y/n)")
                 speak_choice = input(">>> ").strip().lower()
                 if speak_choice == 'y':
@@ -102,7 +101,6 @@ class LegalAIController:
                     print("🔇 Response kept as text.")
             except Exception as e:
                 print(f"💥 Error retrieving agent response: {e}")
-        # ----------------------------------
 
 
 def main():
@@ -118,9 +116,10 @@ def main():
     state = SystemState()
     state.webcam_active = True
     state.is_running = True
-    
-    # Track the active menu action cleanly in the loop
     state.current_action = None 
+    
+    # Lock flag ensuring text typing never triggers hotkeys
+    state.terminal_input_active = False 
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")
@@ -147,6 +146,10 @@ def main():
         print(f"⚠️ Background listener failed: {e}")
 
     def on_press(key):
+        # Ignore global hotkey triggers when user is busy typing data fields
+        if getattr(state, 'terminal_input_active', False):
+            return True
+            
         try:
             if hasattr(key, 'char') and key.char:
                 if key.char in ['m', 't', 'u', 'q']:
@@ -172,17 +175,23 @@ def main():
 
     try:
         while state.is_running:
-            # Check if user flagged an interactive terminal action
             if state.current_action:
                 action = state.current_action
-                state.current_action = None # Reset flag immediately
+                state.current_action = None 
                 
-                if action == 'm':
-                    controller.handle_mic()
-                elif action == 't':
-                    controller.handle_typed_text()
-                elif action == 'u':
-                    controller.handle_upload()
+                # Activate isolation guard before shifting focus to inputs
+                state.terminal_input_active = True
+                
+                try:
+                    if action == 'm':
+                        controller.handle_mic()
+                    elif action == 't':
+                        controller.handle_typed_text()
+                    elif action == 'u':
+                        controller.handle_upload()
+                finally:
+                    # Deactivate guard once focus returns to loop
+                    state.terminal_input_active = False
 
             if cap is None or not cap.isOpened():
                 cap = cv2.VideoCapture(0)
@@ -201,11 +210,10 @@ def main():
                     except Exception as vision_err:
                         print(f"⚠️ Vision processing frame error: {vision_err}")
                 else:
-                    time.sleep(0.03) # Frame pacing
+                    time.sleep(0.03) 
             else:
                 time.sleep(0.03)
 
-            # Check for CV2 key escape windows
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 state.is_running = False
                 break
