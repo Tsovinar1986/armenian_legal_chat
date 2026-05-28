@@ -151,7 +151,7 @@ class VoiceService:
                 if getattr(self.state, 'terminal_input_active', False):
                     continue
 
-                text = self.recognizer.recognize_google(audio, language="en-GB")
+                text = self.recognizer.recognize_google(audio, language="hy-AM")
                 text = self._sanitize_transcript(text)
                 if text:
                     self.input_queue.put(text)

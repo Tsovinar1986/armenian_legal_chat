@@ -75,7 +75,9 @@ class LegalAIController:
             print("🔍 Querying LLM and ChromaDB Vector Storage...")
             response = self.agent.get_advice(user_speech)
             print(f"\n⚖️ Legal AI:\n{response}")
-            self.voice.speak(response)
+            
+            # 🛠️ CHANGED: Disabled natural voice feedback output
+            # self.voice.speak(response)
         else:
             print("⚠️ No audio detected.")
 
@@ -88,17 +90,9 @@ class LegalAIController:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
                 
-                # --- Interactive Natural Voice Feedback ---
-                print("\n🔊 Would you like to hear the response read out loud? (y/n)")
-                speak_choice = input(">>> ").strip().lower()
-                if speak_choice == 'y':
-                    try:
-                        print("🎙️ Speaking...")
-                        self.voice.speak(response)
-                    except Exception as ex:
-                        print(f"⚠️ Voice playback error: {ex}")
-                else:
-                    print("🔇 Response kept as text.")
+                # 🛠️ CHANGED: Removed interactive voice prompt. Responses are kept strictly as text.
+                print("✨ Response kept as text.")
+                
             except Exception as e:
                 print(f"💥 Error retrieving agent response: {e}")
 
