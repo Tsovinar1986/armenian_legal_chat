@@ -75,9 +75,6 @@ class LegalAIController:
             print("🔍 Querying LLM and ChromaDB Vector Storage...")
             response = self.agent.get_advice(user_speech)
             print(f"\n⚖️ Legal AI:\n{response}")
-            
-            # 🛠️ CHANGED: Disabled natural voice feedback output
-            # self.voice.speak(response)
         else:
             print("⚠️ No audio detected.")
 
@@ -89,10 +86,7 @@ class LegalAIController:
             try:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
-                
-                # 🛠️ CHANGED: Removed interactive voice prompt. Responses are kept strictly as text.
                 print("✨ Response kept as text.")
-                
             except Exception as e:
                 print(f"💥 Error retrieving agent response: {e}")
 
@@ -108,12 +102,18 @@ def main():
             print(f"⚠️ Could not create data directory: {e}")
 
     state = SystemState()
-    state.webcam_active = True
     state.is_running = True
     state.current_action = None 
-    
-    # Lock flag ensuring text typing never triggers hotkeys
     state.terminal_input_active = False 
+
+    # 🛠️ CHANGED: Prompt user whether to open the webcam or not
+    use_webcam_input = input("🎥 Would you like to enable the webcam feed? (y/n): ").strip().lower()
+    if use_webcam_input in ['y', 'yes']:
+        state.webcam_active = True
+        print("✅ Webcam feed will be initialized.")
+    else:
+        state.webcam_active = False
+        print("❌ Webcam feed disabled.")
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")
@@ -140,7 +140,6 @@ def main():
         print(f"⚠️ Background listener failed: {e}")
 
     def on_press(key):
-        # Ignore global hotkey triggers when user is busy typing data fields
         if getattr(state, 'terminal_input_active', False):
             return True
             
@@ -165,7 +164,10 @@ def main():
 
     cap = None
     window_name = "Legal AI Feed"
-    print("🎥 Initializing webcam feed...")
+
+    # 🛠️ CHANGED: Only print initialization message if webcam is requested
+    if state.webcam_active:
+        print("🎥 Initializing webcam feed...")
 
     try:
         while state.is_running:
@@ -173,9 +175,7 @@ def main():
                 action = state.current_action
                 state.current_action = None 
                 
-                # Activate isolation guard before shifting focus to inputs
                 state.terminal_input_active = True
-                
                 try:
                     if action == 'm':
                         controller.handle_mic()
@@ -184,33 +184,37 @@ def main():
                     elif action == 'u':
                         controller.handle_upload()
                 finally:
-                    # Deactivate guard once focus returns to loop
                     state.terminal_input_active = False
 
-            if cap is None or not cap.isOpened():
-                cap = cv2.VideoCapture(0)
-                time.sleep(0.5) 
-                if cap.isOpened():
-                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # 🛠️ CHANGED: Wrap webcam loop hooks in an execution check for state.webcam_active
+            if state.webcam_active:
+                if cap is None or not cap.isOpened():
+                    cap = cv2.VideoCapture(0)
+                    time.sleep(0.5) 
+                    if cap.isOpened():
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-            if cap and cap.isOpened():
-                ret, frame = cap.read()
-                if ret:
-                    try:
-                        processed_frame = vision_service.process_frame(frame)
-                        cv2.imshow(window_name, processed_frame)
-                        cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
-                    except Exception as vision_err:
-                        print(f"⚠️ Vision processing frame error: {vision_err}")
+                if cap and cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret:
+                        try:
+                            processed_frame = vision_service.process_frame(frame)
+                            cv2.imshow(window_name, processed_frame)
+                            cv2.setWindowProperty(window_name, cv2.WND_PROP_TOPMOST, 1)
+                        except Exception as vision_err:
+                            print(f"⚠️ Vision processing frame error: {vision_err}")
+                    else:
+                        time.sleep(0.03) 
                 else:
-                    time.sleep(0.03) 
-            else:
-                time.sleep(0.03)
+                    time.sleep(0.03)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                state.is_running = False
-                break
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    state.is_running = False
+                    break
+            else:
+                # 🛠️ CHANGED: Keep loop breathing room if webcam is off so CPU usage stays down
+                time.sleep(0.05)
                 
     except Exception as loop_error:
         print(f"💥 Critical error in main loop: {loop_error}")
