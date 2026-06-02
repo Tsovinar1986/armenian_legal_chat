@@ -89,7 +89,7 @@ class LegalAIController:
 
     def handle_typed_text(self):
         print("\n⌨️ Type or paste your legal question/case description.")
-        print("👉 Press ENTER twice on an blank line to complete pasting and submit:")
+        print("👉 Press ENTER twice on a blank line to complete pasting and submit:")
         
         lines = []
         while True:
@@ -113,6 +113,11 @@ class LegalAIController:
             print(f"\n⚡ Input Payload Verified ({len(user_input)} characters).")
             print("🔍 Querying Vector Database and Processing...")
             try:
+                # Active document tracker debug hook
+                if hasattr(self.agent, 'repo') and hasattr(self.agent.repo, 'vector_db'):
+                    count = self.agent.repo.vector_db._collection.count()
+                    print(f"📡 [DEBUG] Active documents inside collection: {count}")
+                
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
                 print("\n✨ Response kept as text.")
@@ -145,6 +150,9 @@ def main():
         state.webcam_active = False
         print("❌ Webcam feed disabled.")
 
+    # 🎯 Set fine-tuned model identifier explicitly
+    FINETUNED_MODEL_NAME = "armenian-lawyer-router" 
+
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")
     vector_db = Chroma(
@@ -157,7 +165,19 @@ def main():
     vision_service = LegalVisionService(state)
     classifier_service = LegalCaseClassifier(data_folder="data")
     
-    legal_agent = LegalAgent(CompanyLegalRepo(vector_db), state, classifier=classifier_service)
+    # Try injecting our custom fine-tuned variant securely into the constructor setup
+    try:
+        legal_agent = LegalAgent(
+            CompanyLegalRepo(vector_db), 
+            state, 
+            classifier=classifier_service,
+            model=FINETUNED_MODEL_NAME  
+        )
+    except TypeError:
+        # If your LegalAgent constructor doesn't take 'model' directly as an arg, set it as an attribute property
+        legal_agent = LegalAgent(CompanyLegalRepo(vector_db), state, classifier=classifier_service)
+        legal_agent.model_name = FINETUNED_MODEL_NAME
+
     ingestor = IngestionService(vector_db)
 
     controller = LegalAIController(
