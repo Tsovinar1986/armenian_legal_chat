@@ -75,6 +75,16 @@ class LegalAgent:
         scored_cases.sort(reverse=True, key=lambda x: x[0])
         return [case for _, case in scored_cases[:limit]]
 
+    def _truncate_text(self, text: str, max_chars: int = 900) -> str:
+        if not text:
+            return "N/A"
+        if len(text) <= max_chars:
+            return text.strip()
+        truncated = text.strip()[:max_chars]
+        if " " in truncated:
+            truncated = truncated.rsplit(" ", 1)[0]
+        return f"{truncated.strip()}..."
+
     def get_advice(self, user_query: str) -> str:
         """
         Processes the legal query by routing it through the classifier first, 
@@ -91,13 +101,15 @@ class LegalAgent:
                 if matched_case:
                     lawyer = matched_case.get('lawyer_name')
                     lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else "Նշված չէ"
-                    
+                    case_excerpt = self._truncate_text(matched_case.get('judicial_prehistory', ''), max_chars=1200)
                     return (
                         f"🎯 [CLASSIFIER MATCH FOUND]\n"
                         f"🔹 Դասակարգում: {matched_case.get('civil_case_classifier')}\n"
                         f"🔹 Նմանատիպ գործ: {matched_case.get('unique_number')}\n"
                         f"🔹 Հղում: {matched_case.get('link')}\n"
-                        f"🔹 Առաջարկվող փաստաբան: {lawyer_display}"
+                        f"🔹 Առաջարկվող փաստաբան: {lawyer_display}\n\n"
+                        f"📄 Գործի նախապատմություն / բովանդակության օրինակ:\n{case_excerpt}\n"
+                        f"\nՓոխարենը կարող էք բացել հղումը՝ ամբողջ գործը ընթերցելու համար։"
                     )
             except Exception as ex:
                 print(f"⚠️ Error during case classification: {ex}")
@@ -119,11 +131,14 @@ class LegalAgent:
 
                     if case_number or datalex_link:
                         response_text = "✨ [Համընկնում է գտնվել նախադեպային բազայում]\n"
-                        response_text += "Ես համակարգի տվյալների բազայում գտա այս իրավական հարցին լիովին համապատասխանող պատմական նախադեպ։\n\n"
+                        response_text += "Ես համակարգի տվյալների բազայում գտա այս իրավական հարցին համապատասխանող պատմական գործ։\n\n"
                         if case_number:
                             response_text += f"🔢 Դատական գործի համարը: {case_number}\n"
                         if datalex_link:
                             response_text += f"🌐 DataLex հղումը: {datalex_link}\n"
+                        response_text += "\n📄 Գործի բովանդակության օրինակ:\n"
+                        response_text += self._truncate_text(doc.page_content, max_chars=1200)
+                        response_text += "\n\nՄանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։"
                         return response_text
         except Exception as e:
             print(f"⚠️ Վեկտորային բազայի ստուգման սխալ: {e}")
