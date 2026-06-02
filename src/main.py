@@ -2,6 +2,7 @@ import sys
 import os
 import threading
 import time
+import unicodedata  # For resolving Armenian Unicode matching bugs
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['GRPC_VERBOSITY'] = 'NONE'
@@ -60,6 +61,9 @@ class LegalAIController:
                 with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     doc_text = f.read()
 
+            # Normalize document text to standard Form C format
+            doc_text = unicodedata.normalize('NFC', doc_text)
+
             print("🔍 Analyzing case patterns using Centralized Agent...")
             response = self.agent.get_advice(doc_text)
             print(f"\n⚖️ Legal AI Analysis:\n{response}")
@@ -69,26 +73,53 @@ class LegalAIController:
 
     def handle_mic(self):
         print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր: Խնդրում եմ ներկայացրեք ձեր իրավական հարցը...")
-        user_speech = self.voice.listen_once()
-        if user_speech:
-            print(f"\n👤 You: {user_speech}")
-            print("🔍 Querying LLM and ChromaDB Vector Storage...")
-            response = self.agent.get_advice(user_speech)
-            print(f"\n⚖️ Legal AI:\n{response}")
-        else:
-            print("⚠️ No audio detected.")
+        try:
+            user_speech = self.voice.listen_once()
+            if user_speech:
+                user_speech = unicodedata.normalize('NFC', user_speech).strip()
+                print(f"\n👤 You: {user_speech}")
+                print("🔍 Querying LLM and ChromaDB Vector Storage...")
+                response = self.agent.get_advice(user_speech)
+                print(f"\n⚖️ Legal AI:\n{response}")
+            else:
+                print("⚠️ No audio detected.")
+        except Exception as mic_err:
+            print(f"🎙️ Mic capture encountered an error: {mic_err}")
+            print("💡 Tip: Make sure you selected an Input Microphone device, not output speakers.")
 
     def handle_typed_text(self):
-        print("\n⌨️ Type your legal question/case description:")
-        user_input = input(">>> ").strip()
+        print("\n⌨️ Type or paste your legal question/case description.")
+        print("👉 Press ENTER twice on an blank line to complete pasting and submit:")
+        
+        lines = []
+        while True:
+            try:
+                line = input(">>> " if not lines else "... ")
+                if line.strip() == "":
+                    if lines:
+                        break
+                    else:
+                        print("⚠️ Cancelled empty text input.")
+                        return
+                lines.append(line)
+            except EOFError:
+                break
+                
+        # Combine lines and strictly normalize Unicode characters for accurate matching
+        raw_input = " ".join(lines).strip()
+        user_input = unicodedata.normalize('NFC', raw_input)
+        
         if user_input:
-            print("🔍 Processing your request, please wait...")
+            print(f"\n⚡ Input Payload Verified ({len(user_input)} characters).")
+            print("🔍 Querying Vector Database and Processing...")
             try:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
-                print("✨ Response kept as text.")
+                print("\n✨ Response kept as text.")
             except Exception as e:
                 print(f"💥 Error retrieving agent response: {e}")
+        else:
+            print("⚠️ Input string was empty.")
 
 
 def main():
@@ -106,7 +137,6 @@ def main():
     state.current_action = None 
     state.terminal_input_active = False 
 
-    # 🛠️ CHANGED: Prompt user whether to open the webcam or not
     use_webcam_input = input("🎥 Would you like to enable the webcam feed? (y/n): ").strip().lower()
     if use_webcam_input in ['y', 'yes']:
         state.webcam_active = True
@@ -137,7 +167,7 @@ def main():
     try:
         voice_service.start_background_listener()
     except Exception as e:
-        print(f"⚠️ Background listener failed: {e}")
+        print(f"⚠️ Background listener failed initialization: {e}")
 
     def on_press(key):
         if getattr(state, 'terminal_input_active', False):
@@ -165,7 +195,6 @@ def main():
     cap = None
     window_name = "Legal AI Feed"
 
-    # 🛠️ CHANGED: Only print initialization message if webcam is requested
     if state.webcam_active:
         print("🎥 Initializing webcam feed...")
 
@@ -186,7 +215,6 @@ def main():
                 finally:
                     state.terminal_input_active = False
 
-            # 🛠️ CHANGED: Wrap webcam loop hooks in an execution check for state.webcam_active
             if state.webcam_active:
                 if cap is None or not cap.isOpened():
                     cap = cv2.VideoCapture(0)
@@ -213,7 +241,6 @@ def main():
                     state.is_running = False
                     break
             else:
-                # 🛠️ CHANGED: Keep loop breathing room if webcam is off so CPU usage stays down
                 time.sleep(0.05)
                 
     except Exception as loop_error:
