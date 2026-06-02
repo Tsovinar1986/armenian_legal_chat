@@ -158,7 +158,7 @@ def main():
         print("❌ Webcam feed disabled.")
 
     # 🎯 Set fine-tuned model identifier explicitly
-    FINETUNED_MODEL_NAME = "armenian-lawyer-router" 
+    FINETUNED_MODEL_NAME = "armenia-lawyer-router" 
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")

@@ -11,12 +11,12 @@ class LegalAgent:
         :param repo: Instance of CompanyLegalRepo containing Chroma vector_db
         :param state: Instance of SystemState
         :param classifier: Instance of LegalCaseClassifier
-        :param model: Model name to use (e.g., "armenian-lawyer-router")
+        :param model: Model name to use (e.g., "armenia-lawyer-router")
         """
         self.repo = repo
         self.state = state
         self.classifier = classifier
-        self.model_name = model or "armenian-lawyer-router"
+        self.model_name = model or "armenia-lawyer-router"
         self.court_cases = []
         
         # Load court papers data from CSV
