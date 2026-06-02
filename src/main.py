@@ -83,9 +83,14 @@ class LegalAIController:
                 print(f"\n⚖️ Legal AI:\n{response}")
             else:
                 print("⚠️ No audio detected.")
+                print("💡 Suggestion: If you don't have a microphone/headphones available,")
+                print("   press [t] to type your legal question instead.")
         except Exception as mic_err:
             print(f"🎙️ Mic capture encountered an error: {mic_err}")
-            print("💡 Tip: Make sure you selected an Input Microphone device, not output speakers.")
+            print("💡 Troubleshooting tips:")
+            print("   • Make sure you selected an Input Microphone device, not output speakers")
+            print("   • Without mic/headphones? Press [t] to type your question instead")
+            print("   • Or press [u] to upload a legal document for analysis")
 
     def handle_typed_text(self):
         print("\n⌨️ Type or paste your legal question/case description.")
@@ -111,18 +116,20 @@ class LegalAIController:
         
         if user_input:
             print(f"\n⚡ Input Payload Verified ({len(user_input)} characters).")
-            print("🔍 Querying Vector Database and Processing...")
+            print("🔍 Querying LLM and ChromaDB Vector Storage...")
             try:
                 # Active document tracker debug hook
                 if hasattr(self.agent, 'repo') and hasattr(self.agent.repo, 'vector_db'):
                     count = self.agent.repo.vector_db._collection.count()
                     print(f"📡 [DEBUG] Active documents inside collection: {count}")
                 
+                print("👤 Processing your text question with AI agent...")
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
-                print("\n✨ Response kept as text.")
+                print("\n✨ Response generated using LLM model.")
             except Exception as e:
                 print(f"💥 Error retrieving agent response: {e}")
+                print("💡 Tip: Check that the model and vector database are properly configured.")
         else:
             print("⚠️ Input string was empty.")
 
