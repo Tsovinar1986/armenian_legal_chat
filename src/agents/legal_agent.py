@@ -3,6 +3,7 @@ import urllib.parse
 import os
 import csv
 from langchain_ollama import OllamaLLM
+from src.services.case_export import CaseExportService
 
 class LegalAgent:
     def __init__(self, repo, state, classifier=None, model=None):
@@ -18,6 +19,7 @@ class LegalAgent:
         self.classifier = classifier
         self.model_name = model or "armenia-lawyer-router"
         self.court_cases = []
+        self.export_service = CaseExportService()  # Initialize export service
         
         # Load court papers data from CSV
         self._load_court_cases()
@@ -220,3 +222,187 @@ class LegalAgent:
             import traceback
             traceback.print_exc()
             return f"Իրավական տվյալների համադրման (RAG) համակարգի սխալ: {str(e)}"
+    
+    def get_similar_cases(self, query: str, limit: int = 5) -> list:
+        """
+        Get similar cases based on the query and export them to a text file.
+        
+        Args:
+            query: The search query/case description
+            limit: Maximum number of similar cases to return
+            
+        Returns:
+            List of similar case dictionaries
+        """
+        if not self.classifier:
+            print("⚠️ Classifier not available for similar case search")
+            return []
+        
+        try:
+            similar_cases = self.classifier.find_multiple_similar_cases(query, limit=limit)
+            
+            if similar_cases:
+                print(f"\n✅ Found {len(similar_cases)} similar cases")
+                
+                # Export cases to file
+                export_path = self.export_service.export_similar_cases(similar_cases, query)
+                
+                if export_path:
+                    print(f"📁 Cases exported to: {export_path}")
+                    return similar_cases
+            else:
+                print("⚠️ No similar cases found")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Error getting similar cases: {e}")
+            return []
+    
+    def get_approved_cases_with_lawyers(self, limit: int = 10) -> dict:
+        """
+        Get approved/successful cases with lawyer information.
+        
+        Args:
+            limit: Maximum number of approved cases to return
+            
+        Returns:
+            Dictionary containing approved cases and lawyer statistics
+        """
+        if not self.classifier:
+            print("⚠️ Classifier not available for case search")
+            return {}
+        
+        try:
+            # Get approved cases
+            approved_cases = self.classifier.find_approved_cases(limit=limit)
+            
+            if not approved_cases:
+                print("⚠️ No approved cases found in the database")
+                return {
+                    'approved_cases': [],
+                    'total_count': 0,
+                    'lawyers': []
+                }
+            
+            print(f"\n✅ Found {len(approved_cases)} approved cases")
+            
+            # Export approved cases to file
+            export_path = self.export_service.export_approved_cases(approved_cases)
+            
+            # Get top lawyers by cases
+            top_lawyers = self.classifier.get_top_lawyers_by_cases(limit=10)
+            
+            # Format lawyer information
+            lawyer_info = []
+            for lawyer_name, stats in top_lawyers:
+                lawyer_info.append({
+                    'name': lawyer_name,
+                    'case_count': stats['count'],
+                    'sample_cases': stats['cases'][:2]  # Include up to 2 sample cases
+                })
+            
+            return {
+                'approved_cases': approved_cases,
+                'total_count': len(approved_cases),
+                'lawyers': lawyer_info,
+                'export_file': export_path
+            }
+            
+        except Exception as e:
+            print(f"❌ Error getting approved cases: {e}")
+            return {}
+    
+    def get_lawyer_cases(self, lawyer_name: str, limit: int = 10) -> list:
+        """
+        Get all cases handled by a specific lawyer.
+        
+        Args:
+            lawyer_name: Name of the lawyer to search for
+            limit: Maximum number of cases to return
+            
+        Returns:
+            List of case dictionaries for the lawyer
+        """
+        if not self.classifier:
+            print("⚠️ Classifier not available")
+            return []
+        
+        try:
+            cases = self.classifier.find_cases_by_lawyer(lawyer_name, limit=limit)
+            
+            if cases:
+                print(f"\n✅ Found {len(cases)} cases for lawyer: {lawyer_name}")
+                # Export to file
+                export_path = self.export_service.export_similar_cases(cases, f"Cases by {lawyer_name}")
+                return cases
+            else:
+                print(f"⚠️ No cases found for lawyer: {lawyer_name}")
+                return []
+                
+        except Exception as e:
+            print(f"❌ Error getting lawyer cases: {e}")
+            return []
+    
+    def format_similar_cases_response(self, similar_cases: list) -> str:
+        """
+        Format similar cases into a readable response.
+        
+        Args:
+            similar_cases: List of similar case dictionaries
+            
+        Returns:
+            Formatted string response
+        """
+        if not similar_cases:
+            return "❌ Նման գործեր չ գտնվեցին։"
+        
+        response = f"✨ Գտնվել է {len(similar_cases)} նման դատական գործ\n"
+        response += "=" * 70 + "\n\n"
+        
+        for idx, case in enumerate(similar_cases, 1):
+            similarity = case.get('similarity_score', 0)
+            similarity_pct = int(similarity * 100)
+            
+            response += f"📌 ԳՈՐԾ #{idx} (համընկնում {similarity_pct}%)\n"
+            response += f"   🔢 Համար: {case.get('unique_number', 'N/A')}\n"
+            response += f"   ⚖️ Փաստաբան: {case.get('lawyer_name', 'Նշված չէ')}\n"
+            response += f"   📋 Դասակարգում: {case.get('civil_case_classifier', 'N/A')}\n"
+            response += f"   🌐 Հղում: {case.get('link', 'N/A')}\n"
+            response += "\n"
+        
+        response += "=" * 70 + "\n"
+        response += f"📁 Բոլոր գործերը արտահանվել են text ֆայලի մեջ / All cases exported to text file\n"
+        
+        return response
+    
+    def format_approved_cases_response(self, result: dict) -> str:
+        """
+        Format approved cases into a readable response.
+        
+        Args:
+            result: Dictionary from get_approved_cases_with_lawyers
+            
+        Returns:
+            Formatted string response
+        """
+        if not result.get('approved_cases'):
+            return "❌ Հաստատված գործեր չ գտնվեցին։"
+        
+        approved_cases = result.get('approved_cases', [])
+        lawyers = result.get('lawyers', [])
+        
+        response = f"✅ ՀԱՍՏԱՏՎԱԾ/ՀԱՋՈՂՎԱԾ ԴԱՏԱԿԱՆ ԳՈՐԾԵՐ\n"
+        response += f"Ընդամենը հաստատված գործեր: {result.get('total_count', 0)}\n\n"
+        
+        if lawyers:
+            response += f"👨‍⚖️ TOP ՓԱՍՏԱԲԱՆՆԵՐ ({len(lawyers)})\n"
+            response += "=" * 70 + "\n"
+            for idx, lawyer in enumerate(lawyers[:5], 1):  # Show top 5 lawyers
+                response += f"\n#{idx} ⭐ {lawyer['name']}\n"
+                response += f"    Հաջողված գործեր: {lawyer['case_count']}\n"
+        
+        response += "\n" + "=" * 70 + "\n"
+        response += f"📄 Մանրամասն հաշվետվություն արտահանվել է text ֆայլի մեջ\n"
+        response += f"📁 Ֆայլի վայրը: {result.get('export_file', 'exports/')}\n"
+        
+        return response

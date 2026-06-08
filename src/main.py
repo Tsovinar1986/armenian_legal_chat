@@ -132,6 +132,93 @@ class LegalAIController:
                 print("💡 Tip: Check that the model and vector database are properly configured.")
         else:
             print("⚠️ Input string was empty.")
+    
+    def handle_similar_cases(self):
+        """Find and export similar cases based on user input"""
+        print("\n🔍 ՆՄԱՆ ԳՈՐԾԵՐԻ ՈՐՈՆՈՒՄ / SIMILAR CASES SEARCH")
+        print("⌨️ Describe your case or legal issue:")
+        print("👉 Press ENTER twice on a blank line to submit:")
+        
+        lines = []
+        while True:
+            try:
+                line = input(">>> " if not lines else "... ")
+                if line.strip() == "":
+                    if lines:
+                        break
+                    else:
+                        print("⚠️ Cancelled.")
+                        return
+                lines.append(line)
+            except EOFError:
+                break
+        
+        query = " ".join(lines).strip()
+        query = unicodedata.normalize('NFC', query)
+        
+        if query:
+            print(f"\n🔎 Searching for similar cases...")
+            similar_cases = self.agent.get_similar_cases(query, limit=5)
+            
+            if similar_cases:
+                response = self.agent.format_similar_cases_response(similar_cases)
+                print(f"\n{response}")
+            else:
+                print("❌ No similar cases found in the database.")
+        else:
+            print("⚠️ Empty query.")
+    
+    def handle_approved_cases(self):
+        """Show approved/successful cases with lawyer names"""
+        print("\n✅ ՀԱՍՏԱՏՎԱԾ ԳՈՐԾԵՐԻ ՑՈՒՑԱԿ / APPROVED CASES LIST")
+        print("⏳ Searching approved cases and lawyer information...")
+        
+        try:
+            result = self.agent.get_approved_cases_with_lawyers(limit=20)
+            
+            if result.get('approved_cases'):
+                response = self.agent.format_approved_cases_response(result)
+                print(f"\n{response}")
+                
+                # Also print top lawyers with their case counts
+                print("\n" + "=" * 70)
+                print("👨‍⚖️ TOP LAWYERS - TOP ՓԱՍՏԱԲԱՆՆԵՐ")
+                print("=" * 70)
+                for idx, lawyer in enumerate(result.get('lawyers', [])[:10], 1):
+                    print(f"{idx}. {lawyer['name']}")
+                    print(f"   📊 Successful cases: {lawyer['case_count']}")
+                    
+                    # Show sample cases
+                    samples = lawyer.get('sample_cases', [])
+                    if samples:
+                        print(f"   📋 Sample cases:")
+                        for sample in samples[:2]:
+                            print(f"      • {sample.get('unique_number')} - {sample.get('civil_case_classifier', 'N/A')}")
+                    print()
+            else:
+                print("❌ No approved cases found in the database.")
+        except Exception as e:
+            print(f"❌ Error retrieving approved cases: {e}")
+    
+    def handle_search_lawyer(self):
+        """Search for cases by a specific lawyer"""
+        print("\n⚖️ ՓԱՍՏԱԲԱՆԻ ԳՈՐԾԵՐԻ ՈՐՈՆՈՒՄ / SEARCH LAWYER'S CASES")
+        print("Enter lawyer's name:")
+        lawyer_name = input(">>> ").strip()
+        lawyer_name = unicodedata.normalize('NFC', lawyer_name)
+        
+        if lawyer_name:
+            print(f"\n🔎 Searching for cases by {lawyer_name}...")
+            cases = self.agent.get_lawyer_cases(lawyer_name, limit=10)
+            
+            if cases:
+                response = self.agent.format_similar_cases_response(cases)
+                print(f"\n{response}")
+                print(f"\n📝 Total cases found for {lawyer_name}: {len(cases)}")
+            else:
+                print(f"❌ No cases found for lawyer: {lawyer_name}")
+        else:
+            print("⚠️ Empty name.")
 
 
 def main():
@@ -202,7 +289,7 @@ def main():
             
         try:
             if hasattr(key, 'char') and key.char:
-                if key.char in ['m', 't', 'u', 'q']:
+                if key.char in ['m', 't', 'u', 's', 'a', 'l', 'q']:
                     state.current_action = key.char
                     if key.char == 'q':
                         state.is_running = False
@@ -217,6 +304,9 @@ def main():
     print("   [m] → Speak (Microphone)")
     print("   [t] → Type your question manually")
     print("   [u] → Upload legal document (File path)")
+    print("   [s] → Find similar cases")
+    print("   [a] → Show approved cases & top lawyers")
+    print("   [l] → Search cases by lawyer name")
     print("   [q] → Quit\n")
 
     cap = None
@@ -239,6 +329,12 @@ def main():
                         controller.handle_typed_text()
                     elif action == 'u':
                         controller.handle_upload()
+                    elif action == 's':
+                        controller.handle_similar_cases()
+                    elif action == 'a':
+                        controller.handle_approved_cases()
+                    elif action == 'l':
+                        controller.handle_search_lawyer()
                 finally:
                     state.terminal_input_active = False
 
