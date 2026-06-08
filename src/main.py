@@ -127,11 +127,35 @@ class LegalAIController:
                 response = self.agent.get_advice(user_input)
                 print(f"\n⚖️ Legal AI:\n{response}")
                 print("\n✨ Response generated using LLM model.")
+
+                # Give the user the opportunity to search by lawyer name after reviewing the typed case
+                self.prompt_lawyer_name_after_typed()
             except Exception as e:
                 print(f"💥 Error retrieving agent response: {e}")
                 print("💡 Tip: Check that the model and vector database are properly configured.")
         else:
             print("⚠️ Input string was empty.")
+
+    def prompt_lawyer_name_after_typed(self):
+        print("\n📌 If you want to see cases for a specific lawyer after reading the above answer, enter the lawyer's name now.")
+        print("   Press ENTER to skip and return to the main menu.")
+        lawyer_name = input(">>> ").strip()
+        lawyer_name = unicodedata.normalize('NFC', lawyer_name)
+
+        if lawyer_name:
+            print(f"\n🔎 Searching for cases handled by lawyer: {lawyer_name}")
+            try:
+                cases = self.agent.get_lawyer_cases(lawyer_name, limit=10)
+                if cases:
+                    response = self.agent.format_similar_cases_response(cases)
+                    print(f"\n{response}")
+                    print(f"\n📝 Total cases found for {lawyer_name}: {len(cases)}")
+                else:
+                    print(f"❌ No cases found for lawyer: {lawyer_name}")
+            except Exception as e:
+                print(f"⚠️ Error searching lawyer cases: {e}")
+        else:
+            print("✅ Skipping lawyer search. Returning to main menu.")
     
     def handle_similar_cases(self):
         """Find and export similar cases based on user input"""

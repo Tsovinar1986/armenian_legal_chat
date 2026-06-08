@@ -31,14 +31,19 @@ This repository is an Armenian-language legal assistance prototype that combines
 ## Setup
 
 ```bash
-cd "/path/to/Armenian Chat part"
+git clone https://github.com/Tsovinar1986/armenian_legal_chat.git
+cd "armenian_legal_chat"
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry. Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
+All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry.
+
+The typed question path now normalizes Unicode input exactly like microphone input, and after a typed question you can optionally enter a lawyer's name to search that lawyer's cases from the database.
+
+Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
 
 ## Run the main app
 
