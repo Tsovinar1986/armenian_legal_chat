@@ -1,5 +1,8 @@
 import cv2
-import mediapipe as mp
+try:
+    import mediapipe as mp
+except ImportError:
+    mp = None
 from ultralytics import YOLO
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -8,11 +11,15 @@ class LegalVisionService:
     def __init__(self, state):
         self.state = state
         
-        self.yolo = YOLO('yolov8n.pt') 
-        self.mp_pose = mp.solutions.pose.Pose(
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.7
-        )
+        self.yolo = YOLO('yolov8n.pt')
+        self.mp_pose = None
+        if mp is not None:
+            self.mp_pose = mp.solutions.pose.Pose(
+                min_detection_confidence=0.7,
+                min_tracking_confidence=0.7
+            )
+        else:
+            print("⚠️ Optional dependency 'mediapipe' is not installed. Pose-based analysis will be disabled.")
         
         # Armenian Action Map
         self.action_map = {
@@ -42,6 +49,45 @@ class LegalVisionService:
         draw.text(position, text, font=font, fill=(0, 255, 0)) # Green text
         return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
+    def process_video(self, video_path, window_name="Legal AI - Video Analysis"):
+        """Process an uploaded video file and return the unique detected actions."""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video file: {video_path}")
+
+        unique_actions = set()
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            processed_frame = self.process_frame(frame)
+            if self.state.people_actions:
+                unique_actions.update(self.state.people_actions)
+
+            status_text = (
+                "Detected: " + ", ".join(sorted(unique_actions))
+                if unique_actions else "Detecting actions..."
+            )
+            cv2.putText(
+                processed_frame,
+                status_text,
+                (10, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 0),
+                2,
+                cv2.LINE_AA,
+            )
+
+            cv2.imshow(window_name, processed_frame)
+            if cv2.waitKey(25) & 0xFF == ord('q'):
+                break
+
+        cap.release()
+        cv2.destroyAllWindows()
+        return list(unique_actions)
+
     def analyze_skeleton(self, lm, detected_objects):
         r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
         l_wrist = lm[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
@@ -70,18 +116,20 @@ class LegalVisionService:
                 if self.yolo.names[int(box.cls[0])] == 'person':
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     crop = frame[y1:y2, x1:x2]
-                    if crop.size == 0: continue
-                    
-                    res_mp = self.mp_pose.process(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                    
-                    if res_mp.pose_landmarks:
-                        action = self.analyze_skeleton(res_mp.pose_landmarks.landmark, objects_seen)
-                        if "cell phone" in objects_seen:
-                            actions_in_frame.append(self.action_map["phone"])
-                        actions_in_frame.append(action)
-                        
-                        # DRAWING THE ARMENIAN TEXT ON THE FRAME
-                        frame = self._draw_unicode_text(frame, action, (x1, y1 - 30))
+                    if crop.size == 0:
+                        continue
+
+                    if self.mp_pose is not None:
+                        res_mp = self.mp_pose.process(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
+                        if res_mp.pose_landmarks:
+                            action = self.analyze_skeleton(res_mp.pose_landmarks.landmark, objects_seen)
+                            if "cell phone" in objects_seen:
+                                actions_in_frame.append(self.action_map["phone"])
+                            actions_in_frame.append(action)
+                            # DRAWING THE ARMENIAN TEXT ON THE FRAME
+                            frame = self._draw_unicode_text(frame, action, (x1, y1 - 30))
+                    else:
+                        actions_in_frame.append(self.action_map["normal"])
 
         self.state.people_actions = list(set(actions_in_frame)) 
         return frame # Return the modified frame to show in cv2.imshow
