@@ -1,5 +1,7 @@
 # Armenian Legal AI
 
+Project documentation is maintained in [DOCUMENTATION.md](DOCUMENTATION.md).
+
 This repository is an Armenian-language legal assistance prototype that combines retrieval-augmented generation (RAG) over court-style text, live webcam interpretation of simple body-language cues, and voice input and output in Eastern Armenian. It is intended for experimentation and research workflows around Armenian legal text, not as a substitute for a licensed attorney.
 
 ## What it does
