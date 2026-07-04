@@ -1,30 +1,31 @@
 # Project Documentation
 
 ## Overview
-This repository contains an Armenian legal chat application and supporting documentation. The documentation in this file consolidates the earlier duplicated guidance into a single authoritative reference for the project.
+This repository contains an Armenian legal chat application, a real-time vision analysis pipeline, and supporting documentation. It now supports live webcam and network camera streams for real-time Armenian action detection and emotion inference.
 
 ## Project Summary
-- Added a clear project overview and repository notes.
-- Documented the intended GitHub remote and deployment context.
-- Consolidated duplicate documentation into one merged guide.
-- Prepared the workspace for follow-up implementation and review.
+- Added Armenian body-language and activity detection support in `src/services/vision.py`.
+- Added emotion detection support using face landmarks and heuristic inference.
+- Added live camera source selection in `src/main.py` for built-in webcams and IP/mobile streams.
+- Documented usage for `0`, `http://...`, and `rtsp://...` camera sources.
+- Maintained the configured GitHub remote `https://github.com/Tsovinar1986/armenian_legal_chat.git`.
 
 ## Implemented updates
-- Added a clear project overview and repository notes.
-- Documented the intended GitHub remote and deployment context.
-- Consolidated duplicate documentation into one merged guide.
-- Prepared the workspace for follow-up implementation and review.
+- Real-time webcam and network camera streaming support.
+- Armenian-language action detection for gestures like hands-on-hips, pointing, walking, running, and more.
+- Emotion detection support for facial expression inference.
+- Documentation updates to mirror the new live stream and vision capabilities.
 
 ## Recent Changes
-- Added project-level documentation for the Armenian legal chat repository.
-- Merged the duplicate documentation files into one canonical document.
-- Prepared the workspace for commit and push to the configured GitHub remote.
+- Added camera source prompt and IP stream fallbacks in `src/main.py`.
+- Extended action detection heuristics in `src/services/vision.py`.
+- Updated `README.md`, `DOCUMENTATION.md`, and `DOCUMENTATION_hy.md` with the new runtime instructions.
 
 ## Repository Notes
-- The target remote is https://github.com/Tsovinar1986/armenian_legal_chat.git.
-- Changes should be committed with a clear message before pushing.
+- Target remote: https://github.com/Tsovinar1986/armenian_legal_chat.git
+- Commit and push documentation changes after verifying the working tree.
 
 ## Next steps
-- Review the application code and update any missing functionality.
-- Commit the documentation changes once the working tree is finalized.
-- Push to the configured GitHub remote.
+- Test the live camera stream with both built-in webcam and IP/mobile sources.
+- Enhance object detection and scene understanding support.
+- Continue refining Armenian vision feedback and documentation.
