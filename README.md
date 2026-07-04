@@ -7,7 +7,9 @@ This repository is an Armenian-language legal assistance prototype that combines
 ## Remaining work
 - Add object detection support for action and scene understanding.
 - Add action detection support for recognizing body-language or activity cues.
-- Add emotion detection support for facial or behavioral sentiment inference.
+
+## Completed vision updates
+- Emotion detection support implemented in `src/services/vision.py` using face analysis and heuristic facial expression inference.
 
 ## What it does
 

@@ -13,14 +13,29 @@ class LegalVisionService:
         
         self.yolo = YOLO('yolov8n.pt')
         self.mp_pose = None
+        self.mp_face = None
         if mp is not None:
             self.mp_pose = mp.solutions.pose.Pose(
                 min_detection_confidence=0.7,
                 min_tracking_confidence=0.7
             )
+            try:
+                self.mp_face = mp.solutions.face_mesh.FaceMesh(
+                    static_image_mode=False,
+                    max_num_faces=1,
+                    min_detection_confidence=0.6,
+                    min_tracking_confidence=0.6
+                )
+            except Exception as ex:
+                print(f"⚠️ Mediapipe FaceMesh unavailable: {ex}")
+                self.mp_face = None
         else:
-            print("⚠️ Optional dependency 'mediapipe' is not installed. Pose-based analysis will be disabled.")
-        
+            print("⚠️ Optional dependency 'mediapipe' is not installed. Pose- and face-based analysis will be disabled.")
+
+        self.face_cascade = cv2.CascadeClassifier(
+            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+        )
+
         # Armenian Action Map
         self.action_map = {
             "slap": "Ապտակ (Ֆիզիկական բռնություն - ՀՀ քր. օր. 195 հոդված)",
@@ -35,6 +50,52 @@ class LegalVisionService:
         
         # Path to a font that supports Armenian on macOS
         self.font_path = "/Library/Fonts/Arial Unicode.ttf" 
+        self.emotion_map = {
+            "happy": "Երջանիկ",
+            "sad": "Ծանրը",
+            "neutral": "Սթափ",
+            "angry": "Բարկացած",
+            "surprised": "Հիացած",
+        }
+
+    def _distance(self, a, b):
+        return np.linalg.norm(np.array(a) - np.array(b))
+
+    def _infer_emotion_from_landmarks(self, landmarks, image_shape):
+        h, w = image_shape[:2]
+        def pt(index):
+            return np.array([landmarks[index].x * w, landmarks[index].y * h])
+
+        left_mouth = pt(61)
+        right_mouth = pt(291)
+        top_lip = pt(13)
+        bottom_lip = pt(14)
+
+        mouth_width = self._distance(left_mouth, right_mouth) + 1e-6
+        mouth_height = self._distance(top_lip, bottom_lip)
+        smile_ratio = mouth_width / mouth_height if mouth_height else 0.0
+
+        if smile_ratio > 4.0 and mouth_height > 0.02 * h:
+            return self.emotion_map["happy"]
+        if mouth_height > 0.05 * h and smile_ratio < 2.5:
+            return self.emotion_map["surprised"]
+        if smile_ratio < 2.0:
+            return self.emotion_map["sad"]
+        return self.emotion_map["neutral"]
+
+    def detect_emotion(self, frame):
+        if self.mp_face is not None:
+            image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.mp_face.process(image_rgb)
+            if results.multi_face_landmarks:
+                return self._infer_emotion_from_landmarks(results.multi_face_landmarks[0].landmark, frame.shape)
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+        if len(faces) > 0:
+            return self.emotion_map["neutral"]
+
+        return self.emotion_map["neutral"]
 
     def _draw_unicode_text(self, frame, text, position):
         """Helper to draw Armenian text using Pillow."""
@@ -65,9 +126,13 @@ class LegalVisionService:
             if self.state.people_actions:
                 unique_actions.update(self.state.people_actions)
 
+            current_emotion = self.state.get_emotion()
+            if current_emotion:
+                processed_frame = self._draw_unicode_text(processed_frame, f"Էմոցիան: {current_emotion}", (10, 70))
+
             status_text = (
-                "Detected: " + ", ".join(sorted(unique_actions))
-                if unique_actions else "Detecting actions..."
+                "Detected: " + ", ".join(sorted(unique_actions)) + f" | Էմոցիան: {current_emotion}"
+                if unique_actions else f"Detecting actions... | Էմոցիան: {current_emotion}"
             )
             cv2.putText(
                 processed_frame,
@@ -130,6 +195,11 @@ class LegalVisionService:
                             frame = self._draw_unicode_text(frame, action, (x1, y1 - 30))
                     else:
                         actions_in_frame.append(self.action_map["normal"])
+
+        emotion = self.detect_emotion(frame)
+        self.state.update_emotion(emotion)
+        if emotion:
+            frame = self._draw_unicode_text(frame, f"Էմոցիան: {emotion}", (10, 70))
 
         self.state.people_actions = list(set(actions_in_frame)) 
         return frame # Return the modified frame to show in cv2.imshow
