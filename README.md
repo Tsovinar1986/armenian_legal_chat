@@ -4,6 +4,11 @@ Project documentation is maintained in [DOCUMENTATION.md](DOCUMENTATION.md).
 
 This repository is an Armenian-language legal assistance prototype that combines retrieval-augmented generation (RAG) over court-style text, live webcam interpretation of simple body-language cues, and voice input and output in Eastern Armenian. It is intended for experimentation and research workflows around Armenian legal text, not as a substitute for a licensed attorney.
 
+## Remaining work
+- Add object detection support for action and scene understanding.
+- Add action detection support for recognizing body-language or activity cues.
+- Add emotion detection support for facial or behavioral sentiment inference.
+
 ## What it does
 
 - Interactive app (`src/main.py`): runs a desktop loop with a webcam preview and on-screen Armenian hints from pose and object detection, optional microphone questions via Google Speech Recognition (`hy-AM`), and answers from a local Ollama model grounded in a Chroma vector store. Press the documented keys to upload `.txt` case dumps or `.xlsx` rows and extend the knowledge base.
