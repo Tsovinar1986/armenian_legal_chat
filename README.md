@@ -6,9 +6,9 @@ This repository is an Armenian-language legal assistance prototype that combines
 
 ## Remaining work
 - Add object detection support for action and scene understanding.
-- Add action detection support for recognizing body-language or activity cues.
 
 ## Completed vision updates
+- Action detection support implemented in `src/services/vision.py` for Armenian body-language and activity cues, including ձեռքեր գոտկատեղին, ցուցադրում, ծռված դիրք, քայլում և վազում.
 - Emotion detection support implemented in `src/services/vision.py` using face analysis and heuristic facial expression inference.
 
 ## What it does
@@ -61,6 +61,10 @@ From the project root so `src` imports resolve:
 ```bash
 python src/main.py
 ```
+
+When prompted, choose a camera source:
+- Enter `0` to use the MacBook or notebook built-in webcam.
+- Enter a network camera URL such as `http://192.168.1.10:8080/video` or `rtsp://<ip>:554/stream` to use a mobile/IP stream.
 
 Controls match the on-screen help: **m** speak, **t** type a question, **u** upload a document, **q** quit and close the video window.
 

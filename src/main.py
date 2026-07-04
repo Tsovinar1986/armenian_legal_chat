@@ -131,8 +131,16 @@ def main():
     state = SystemState()
     state.is_running = True
     
-    use_webcam = input("🎥 Enable webcam? (y/n): ").strip().lower() == 'y'
+    use_webcam = input("🎥 Enable webcam or network camera stream? (y/n): ").strip().lower() == 'y'
     state.webcam_active = use_webcam
+    state.camera_source = 0
+    if state.webcam_active:
+        source_input = input("📡 Camera source (0 for laptop webcam, or URL for IP/mobile stream): ").strip()
+        if source_input:
+            try:
+                state.camera_source = int(source_input)
+            except ValueError:
+                state.camera_source = source_input
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")
@@ -179,10 +187,18 @@ def main():
                 state.terminal_input_active = False
 
             if state.webcam_active:
-                if cap is None or not cap.isOpened(): cap = cv2.VideoCapture(0)
+                if cap is None or not cap.isOpened():
+                    cap = cv2.VideoCapture(state.camera_source)
+                    if not cap.isOpened():
+                        print(f"⚠️ Cannot open camera source: {state.camera_source}")
+                        time.sleep(1)
+                        continue
+
                 ret, frame = cap.read()
-                if ret: cv2.imshow("Legal AI Feed", vision_service.process_frame(frame))
-                if cv2.waitKey(1) & 0xFF == ord('q'): state.is_running = False
+                if ret:
+                    cv2.imshow("Legal AI Feed", vision_service.process_frame(frame))
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    state.is_running = False
             else:
                 time.sleep(0.1)
     finally:
