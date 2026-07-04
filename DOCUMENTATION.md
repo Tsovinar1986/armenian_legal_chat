@@ -4,6 +4,7 @@
 This repository contains an Armenian legal chat application, a real-time vision analysis pipeline, and supporting documentation. It now supports live webcam and network camera streams for real-time Armenian action detection and emotion inference.
 
 ## Project Summary
+- Added shared vision classifier support in `src/services/vision_classifier.py`.
 - Added Armenian body-language and activity detection support in `src/services/vision.py`.
 - Added emotion detection support using face landmarks and heuristic inference.
 - Added live camera source selection in `src/main.py` for built-in webcams and IP/mobile streams.

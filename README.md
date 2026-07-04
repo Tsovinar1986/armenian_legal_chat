@@ -8,6 +8,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 - Add object detection support for action and scene understanding.
 
 ## Completed vision updates
+- Shared classifier module implemented in `src/services/vision_classifier.py` for action and emotion inference.
 - Action detection support implemented in `src/services/vision.py` for Armenian body-language and activity cues, including ձեռքեր գոտկատեղին, ցուցադրում, ծռված դիրք, քայլում և վազում.
 - Emotion detection support implemented in `src/services/vision.py` using face analysis and heuristic facial expression inference.
 

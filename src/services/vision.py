@@ -1,117 +1,28 @@
 import cv2
-try:
-    import mediapipe as mp
-except ImportError:
-    mp = None
-from ultralytics import YOLO
 import numpy as np
+import unicodedata
 from PIL import Image, ImageDraw, ImageFont
+
+from src.services.vision_classifier import VisionClassifier
+
 
 class LegalVisionService:
     def __init__(self, state):
         self.state = state
-        
-        self.yolo = YOLO('yolov8n.pt')
-        self.mp_pose = None
-        self.mp_face = None
-        if mp is not None:
-            self.mp_pose = mp.solutions.pose.Pose(
-                min_detection_confidence=0.7,
-                min_tracking_confidence=0.7
-            )
-            try:
-                self.mp_face = mp.solutions.face_mesh.FaceMesh(
-                    static_image_mode=False,
-                    max_num_faces=1,
-                    min_detection_confidence=0.6,
-                    min_tracking_confidence=0.6
-                )
-            except Exception as ex:
-                print(f"⚠️ Mediapipe FaceMesh unavailable: {ex}")
-                self.mp_face = None
-        else:
-            print("⚠️ Optional dependency 'mediapipe' is not installed. Pose- and face-based analysis will be disabled.")
-
-        self.face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-
-        # Armenian Action Map
-        self.action_map = {
-            "slap": "Ապտակ (Ֆիզիկական բռնություն - ՀՀ քր. օր. 195 հոդված)",
-            "push": "Հրում (Ֆիզիկական ներգործություն)",
-            "hand_up": "Ձեռքի բարձրացում (Խոսքի իրավունքի խնդրանք)",
-            "writing": "Գրառում կատարել (Փաստաթղթավորում)",
-            "phone": "Հեռախոսի օգտագործում (Հնարավոր ապացույցի ձայնագրում)",
-            "sitting": "Նստած (Դատական նիստի կարգ)",
-            "standing": "Կանգնած (Հարգանքի դրսևորում)",
-            "normal": "Բնական վիճակ"
-        }
-        
-        # Path to a font that supports Armenian on macOS
-        self.font_path = "/Library/Fonts/Arial Unicode.ttf" 
-        self.emotion_map = {
-            "happy": "Երջանիկ",
-            "sad": "Ծանրը",
-            "neutral": "Սթափ",
-            "angry": "Բարկացած",
-            "surprised": "Հիացած",
-        }
-
-    def _distance(self, a, b):
-        return np.linalg.norm(np.array(a) - np.array(b))
-
-    def _infer_emotion_from_landmarks(self, landmarks, image_shape):
-        h, w = image_shape[:2]
-        def pt(index):
-            return np.array([landmarks[index].x * w, landmarks[index].y * h])
-
-        left_mouth = pt(61)
-        right_mouth = pt(291)
-        top_lip = pt(13)
-        bottom_lip = pt(14)
-
-        mouth_width = self._distance(left_mouth, right_mouth) + 1e-6
-        mouth_height = self._distance(top_lip, bottom_lip)
-        smile_ratio = mouth_width / mouth_height if mouth_height else 0.0
-
-        if smile_ratio > 4.0 and mouth_height > 0.02 * h:
-            return self.emotion_map["happy"]
-        if mouth_height > 0.05 * h and smile_ratio < 2.5:
-            return self.emotion_map["surprised"]
-        if smile_ratio < 2.0:
-            return self.emotion_map["sad"]
-        return self.emotion_map["neutral"]
-
-    def detect_emotion(self, frame):
-        if self.mp_face is not None:
-            image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.mp_face.process(image_rgb)
-            if results.multi_face_landmarks:
-                return self._infer_emotion_from_landmarks(results.multi_face_landmarks[0].landmark, frame.shape)
-
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
-        if len(faces) > 0:
-            return self.emotion_map["neutral"]
-
-        return self.emotion_map["neutral"]
+        self.classifier = VisionClassifier()
+        self.font_path = "/Library/Fonts/Arial Unicode.ttf"
 
     def _draw_unicode_text(self, frame, text, position):
-        """Helper to draw Armenian text using Pillow."""
         img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(img_pil)
-        
         try:
             font = ImageFont.truetype(self.font_path, 20)
-        except:
+        except Exception:
             font = ImageFont.load_default()
-            
-        draw.text(position, text, font=font, fill=(0, 255, 0)) # Green text
+        draw.text(position, text, font=font, fill=(0, 255, 0))
         return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
     def process_video(self, video_path, window_name="Legal AI - Video Analysis"):
-        """Process an uploaded video file and return the unique detected actions."""
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video file: {video_path}")
@@ -123,8 +34,9 @@ class LegalVisionService:
                 break
 
             processed_frame = self.process_frame(frame)
-            if self.state.people_actions:
-                unique_actions.update(self.state.people_actions)
+            current_actions = self.state.get_actions()
+            if current_actions:
+                unique_actions.update(current_actions)
 
             current_emotion = self.state.get_emotion()
             if current_emotion:
@@ -153,53 +65,31 @@ class LegalVisionService:
         cv2.destroyAllWindows()
         return list(unique_actions)
 
-    def analyze_skeleton(self, lm, detected_objects):
-        r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
-        l_wrist = lm[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
-        nose = lm[mp.solutions.pose.PoseLandmark.NOSE]
-        r_hip = lm[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
-        r_knee = lm[mp.solutions.pose.PoseLandmark.RIGHT_KNEE]
-
-        if r_wrist.y < nose.y and abs(r_wrist.x - nose.x) < 0.15:
-            return self.action_map["slap"]
-        if r_wrist.z < -0.6 and l_wrist.z < -0.6:
-            return self.action_map["push"]
-        if r_wrist.y < (nose.y - 0.2):
-            return self.action_map["hand_up"]
-        if abs(r_hip.y - r_knee.y) < 0.15:
-            return self.action_map["sitting"]
-
-        return self.action_map["standing"]
-
     def process_frame(self, frame):
-        results = self.yolo(frame, verbose=False, classes=[0, 67])
+        results, objects_seen = self.classifier.detect_objects(frame)
         actions_in_frame = []
-        objects_seen = [self.yolo.names[int(c)] for r in results for c in r.boxes.cls]
 
         for r in results:
             for box in r.boxes:
-                if self.yolo.names[int(box.cls[0])] == 'person':
+                if self.classifier.yolo.names[int(box.cls[0])] == 'person':
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     crop = frame[y1:y2, x1:x2]
                     if crop.size == 0:
                         continue
 
-                    if self.mp_pose is not None:
-                        res_mp = self.mp_pose.process(cv2.cvtColor(crop, cv2.COLOR_BGR2RGB))
-                        if res_mp.pose_landmarks:
-                            action = self.analyze_skeleton(res_mp.pose_landmarks.landmark, objects_seen)
-                            if "cell phone" in objects_seen:
-                                actions_in_frame.append(self.action_map["phone"])
-                            actions_in_frame.append(action)
-                            # DRAWING THE ARMENIAN TEXT ON THE FRAME
-                            frame = self._draw_unicode_text(frame, action, (x1, y1 - 30))
-                    else:
-                        actions_in_frame.append(self.action_map["normal"])
+                    actions = self.classifier.classify_actions(crop, objects_seen)
+                    actions_in_frame.extend(actions)
+                    for idx, action in enumerate(actions):
+                        frame = self._draw_unicode_text(frame, action, (x1, y1 - 30 - idx * 22))
 
-        emotion = self.detect_emotion(frame)
+        emotion = self.classifier.detect_emotion(frame)
         self.state.update_emotion(emotion)
         if emotion:
             frame = self._draw_unicode_text(frame, f"Էմոցիան: {emotion}", (10, 70))
 
-        self.state.people_actions = list(set(actions_in_frame)) 
-        return frame # Return the modified frame to show in cv2.imshow
+        self.state.update_actions(list(set(actions_in_frame)))
+        return frame
+
+
+if __name__ == "__main__":
+    print("LegalVisionService module loaded.")
