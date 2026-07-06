@@ -3,6 +3,8 @@ import os
 from datetime import datetime
 from typing import List, Dict, Optional
 
+from docx import Document
+
 
 class CaseExportService:
     """
@@ -184,6 +186,134 @@ class CaseExportService:
             print(f"❌ Error exporting approved cases: {e}")
             return None
     
+    def export_similar_cases_docx(self, cases: List[Dict], query: str) -> str:
+        """
+        Export similar cases (same case type) to a Word document with links.
+
+        Args:
+            cases: List of case dictionaries
+            query: The original search query
+
+        Returns:
+            Path to the exported .docx file
+        """
+        if not cases:
+            print("⚠️ No cases to export")
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"similar_cases_{timestamp}.docx"
+        filepath = os.path.join(self.export_dir, filename)
+
+        try:
+            doc = Document()
+            doc.add_heading("ՆՄԱՆ ԻՐԱՎԱԿԱՆ ԳՈՐԾԵՐԻ ՀԱՇՎԵՏՎՈՒԹՅՈՒՆ / Similar Legal Cases Report", level=1)
+
+            meta = doc.add_paragraph()
+            meta.add_run(f"Report Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n").bold = False
+            meta.add_run(f"Search Query: {query}\n")
+            meta.add_run(f"Total Cases Found: {len(cases)}")
+
+            for idx, case in enumerate(cases, 1):
+                doc.add_heading(f"Case #{idx}", level=2)
+
+                case_num = case.get('unique_number') or case.get('case_number') or 'N/A'
+                doc.add_paragraph(f"Case Number: {case_num}")
+
+                lawyer = case.get('lawyer_name') or case.get('lawyer') or 'Not specified'
+                if lawyer == "(NULL)":
+                    lawyer = "Not specified"
+                doc.add_paragraph(f"Lawyer Name: {lawyer}")
+
+                classification = case.get('civil_case_classifier') or case.get('classification') or 'N/A'
+                doc.add_paragraph(f"Classification / Case Type: {classification}")
+
+                link = case.get('link') or 'N/A'
+                doc.add_paragraph(f"Link: {link}")
+
+                prehistory = case.get('judicial_prehistory') or case.get('prehistory') or ''
+                if prehistory:
+                    doc.add_paragraph("Judicial Prehistory:")
+                    doc.add_paragraph(prehistory)
+
+            doc.save(filepath)
+            print(f"✅ Cases exported to: {filepath}")
+            return filepath
+
+        except Exception as e:
+            print(f"❌ Error exporting cases to docx: {e}")
+            return None
+
+    def export_approved_cases_docx(self, approved_cases: List[Dict], top_lawyers: Optional[List] = None) -> str:
+        """
+        Export approved/successful cases, and the ranking of lawyers by approved
+        case count, to a Word document.
+
+        Args:
+            approved_cases: List of approved case dictionaries
+            top_lawyers: Optional list of (lawyer_name, stats) tuples, stats containing
+                at least a 'count' key, sorted by most approved cases first. Agency
+                name and location are not yet tracked in the source data, so only the
+                lawyer name and case count are included.
+
+        Returns:
+            Path to the exported .docx file
+        """
+        if not approved_cases:
+            print("⚠️ No approved cases to export")
+            return None
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"approved_cases_{timestamp}.docx"
+        filepath = os.path.join(self.export_dir, filename)
+
+        try:
+            doc = Document()
+            doc.add_heading("ՀԱՋՈՂՎԱԾ ԻՐԱՎԱԿԱՆ ԳՈՐԾԵՐ / Approved Legal Cases Report", level=1)
+
+            meta = doc.add_paragraph()
+            meta.add_run(f"Report Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            meta.add_run(f"Total Approved Cases: {len(approved_cases)}")
+
+            if top_lawyers:
+                doc.add_heading("Top Lawyer by Approved Cases", level=2)
+                top_name, top_stats = top_lawyers[0]
+                doc.add_paragraph(
+                    f"{top_name} — {top_stats['count']} approved case(s) "
+                    f"(agency name and location not available in current dataset)"
+                )
+
+                if len(top_lawyers) > 1:
+                    doc.add_heading("Other Lawyers (Ranked)", level=2)
+                    for name, stats in top_lawyers[1:]:
+                        doc.add_paragraph(f"{name} — {stats['count']} approved case(s)", style="List Bullet")
+
+            doc.add_heading("Case Details", level=2)
+            for idx, case in enumerate(approved_cases, 1):
+                doc.add_heading(f"Approved Case #{idx}", level=3)
+
+                case_num = case.get('unique_number') or case.get('case_number') or 'N/A'
+                doc.add_paragraph(f"Case Number: {case_num}")
+
+                lawyer = case.get('lawyer_name') or case.get('lawyer') or 'Not specified'
+                if lawyer == "(NULL)":
+                    lawyer = "Not specified"
+                doc.add_paragraph(f"Lawyer Name: {lawyer}")
+
+                classification = case.get('civil_case_classifier') or case.get('classification') or 'N/A'
+                doc.add_paragraph(f"Classification / Case Type: {classification}")
+
+                link = case.get('link') or 'N/A'
+                doc.add_paragraph(f"Link: {link}")
+
+            doc.save(filepath)
+            print(f"✅ Approved cases exported to: {filepath}")
+            return filepath
+
+        except Exception as e:
+            print(f"❌ Error exporting approved cases to docx: {e}")
+            return None
+
     def get_export_directory(self) -> str:
         """Get the export directory path"""
         return os.path.abspath(self.export_dir)
@@ -192,8 +322,8 @@ class CaseExportService:
         """List all exported files"""
         try:
             files = os.listdir(self.export_dir)
-            txt_files = [f for f in files if f.endswith('.txt')]
-            return sorted(txt_files, reverse=True)
+            exported_files = [f for f in files if f.endswith('.txt') or f.endswith('.docx')]
+            return sorted(exported_files, reverse=True)
         except Exception as e:
             print(f"⚠️ Error listing exports: {e}")
             return []

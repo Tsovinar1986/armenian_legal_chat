@@ -20,6 +20,9 @@ Pillow>=10.0
 # --- Case classifier (src/services/classifier.py) ---
 beautifulsoup4>=4.12
 
+# --- Case export to Word (src/services/case_export.py) ---
+python-docx>=1.1
+
 # --- RAG & LLM (src/main.py, src/agents/legal_agent.py, src/db/repository.py) ---
 chromadb>=0.4
 langchain-chroma>=0.1

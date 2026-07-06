@@ -244,8 +244,8 @@ class LegalAgent:
             if similar_cases:
                 print(f"\n✅ Found {len(similar_cases)} similar cases")
                 
-                # Export cases to file
-                export_path = self.export_service.export_similar_cases(similar_cases, query)
+                # Export cases (same case type/links) to a Word document
+                export_path = self.export_service.export_similar_cases_docx(similar_cases, query)
                 
                 if export_path:
                     print(f"📁 Cases exported to: {export_path}")
@@ -285,12 +285,12 @@ class LegalAgent:
                 }
             
             print(f"\n✅ Found {len(approved_cases)} approved cases")
-            
-            # Export approved cases to file
-            export_path = self.export_service.export_approved_cases(approved_cases)
-            
-            # Get top lawyers by cases
+
+            # Get top lawyers by cases (ranked overall, most approved cases first)
             top_lawyers = self.classifier.get_top_lawyers_by_cases(limit=10)
+
+            # Export approved cases + lawyer ranking to a Word document
+            export_path = self.export_service.export_approved_cases_docx(approved_cases, top_lawyers)
             
             # Format lawyer information
             lawyer_info = []
@@ -332,8 +332,8 @@ class LegalAgent:
             
             if cases:
                 print(f"\n✅ Found {len(cases)} cases for lawyer: {lawyer_name}")
-                # Export to file
-                export_path = self.export_service.export_similar_cases(cases, f"Cases by {lawyer_name}")
+                # Export to a Word document
+                export_path = self.export_service.export_similar_cases_docx(cases, f"Cases by {lawyer_name}")
                 return cases
             else:
                 print(f"⚠️ No cases found for lawyer: {lawyer_name}")
