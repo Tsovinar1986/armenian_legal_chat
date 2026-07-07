@@ -84,6 +84,32 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 Open http://localhost:8000 for a demo UI including an Armenian Legal AI chat widget, or integrate directly against `POST /api/chat` and `GET /api/chat/{session_id}` — see [START_HERE.md](START_HERE.md) for the full API contract. Users and bookings are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords instead of the earlier in-memory, plaintext-password version. Chat history is still in-memory per server process (resets on restart).
 
+### Port already in use
+
+If `uvicorn` fails with `[Errno 48] Address already in use`, something is already listening on that port — usually a previous `uvicorn` process that was never stopped (e.g. the terminal was closed with `Ctrl+C` skipped, or it was left running in the background).
+
+**Option A — use a different port** (no need to touch the other process):
+
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8080
+```
+
+Then open http://localhost:8080 instead.
+
+**Option B — find and stop whatever is holding the port:**
+
+```bash
+lsof -nP -iTCP:8000 -sTCP:LISTEN
+```
+
+This prints the PID (process ID) of whatever is listening on port 8000. Then stop it:
+
+```bash
+kill <PID>
+```
+
+If it doesn't stop (rare), force it with `kill -9 <PID>`. Only kill a process you recognize — `lsof` also shows the command name (`Python`, `node`, etc.) so you can confirm it's safe before killing it. Re-run `lsof -nP -iTCP:8000 -sTCP:LISTEN` afterward with no output to confirm the port is free, then start `uvicorn` again on port 8000.
+
 ## Notebooks
 
 ```bash

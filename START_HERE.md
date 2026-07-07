@@ -22,6 +22,23 @@ Then open:
 
 - http://localhost:8000
 
+### If port 8000 is already in use
+
+`uvicorn` will fail with `[Errno 48] Address already in use` if something else (often a previous `uvicorn` run you forgot to stop) is already listening on that port. Two ways to fix it:
+
+- **Run on a different port instead**, e.g.:
+  ```bash
+  uvicorn main:app --reload --host 0.0.0.0 --port 8080
+  ```
+  then open http://localhost:8080.
+
+- **Or find and stop whatever is using port 8000:**
+  ```bash
+  lsof -nP -iTCP:8000 -sTCP:LISTEN   # shows the PID and process name
+  kill <PID>                          # stop it (add -9 if it won't stop)
+  ```
+  Only kill a PID you recognize from the command name `lsof` prints. Re-run the `lsof` command with no output to confirm the port is free.
+
 ## 3. What is included
 
 The portal now provides:
