@@ -46,6 +46,7 @@ class LegalAgent:
             return
         
         try:
+            csv.field_size_limit(10 * 1024 * 1024)
             with open(csv_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 self.court_cases = list(reader)
@@ -151,9 +152,10 @@ class LegalAgent:
     def _generate_rag_response(self, query: str) -> str:
         try:
             print(f"🔍 Starting RAG response generation for query: {query[:50]}...")
-            docs = self.repo.db.similarity_search(query, k=3)
-            print(f"📚 Found {len(docs)} documents in vector DB")
-            context = "\n\n".join([doc.page_content for doc in docs])
+            results = self.repo.db.similarity_search_with_score(query, k=3)
+            relevant_docs = [doc for doc, score in results if score < 0.8]
+            print(f"📚 Found {len(results)} documents in vector DB, {len(relevant_docs)} above relevance threshold")
+            context = "\n\n".join([doc.page_content for doc in relevant_docs])
             
             # Find relevant court cases from CSV
             relevant_cases = self._find_relevant_cases(query, limit=2)
