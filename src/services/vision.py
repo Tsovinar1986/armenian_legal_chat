@@ -3,14 +3,23 @@ import numpy as np
 import unicodedata
 from PIL import Image, ImageDraw, ImageFont
 
-from src.services.vision_classifier import VisionClassifier
-
 
 class LegalVisionService:
     def __init__(self, state):
         self.state = state
-        self.classifier = VisionClassifier()
+        self._classifier = None
         self.font_path = "/Library/Fonts/Arial Unicode.ttf"
+
+    @property
+    def classifier(self):
+        """Lazily import and build VisionClassifier (PyTorch + YOLO + MediaPipe) only
+        on first actual use (webcam frame or video upload), so text/voice-only sessions
+        never pay that memory/import cost."""
+        if self._classifier is None:
+            print("🎥 Loading vision models (YOLO + MediaPipe) on first use...")
+            from src.services.vision_classifier import VisionClassifier
+            self._classifier = VisionClassifier()
+        return self._classifier
 
     def _draw_unicode_text(self, frame, text, position):
         img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
