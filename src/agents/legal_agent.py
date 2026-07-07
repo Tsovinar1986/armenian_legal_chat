@@ -111,6 +111,33 @@ class LegalAgent:
                 lines.append(f"{speaker}: {text}")
         return "\n".join(lines) if lines else "Սա այս զրույցի առաջին հարցն է։"
 
+    def _build_similar_cases_block(self, search_query: str, exclude_unique_number: str = None, limit: int = 3) -> str:
+        """Render a compact list of similar cases (lawyer name + approved marker) so the
+        chat answer surfaces useful precedents inline, without a separate search step."""
+        if not self.classifier:
+            return ""
+        try:
+            similar_cases = self.classifier.find_multiple_similar_cases(search_query, limit=limit + 1)
+        except Exception as ex:
+            print(f"⚠️ Error finding similar cases for inline block: {ex}")
+            return ""
+
+        if exclude_unique_number:
+            similar_cases = [c for c in similar_cases if c.get('unique_number') != exclude_unique_number]
+        similar_cases = similar_cases[:limit]
+        if not similar_cases:
+            return ""
+
+        lines = ["\n📚 Նմանատիպ գործեր (օգտակար օրինակներ).\n"]
+        for idx, case in enumerate(similar_cases, 1):
+            lawyer_name = case.get('lawyer_name') or 'Նշված չէ'
+            approved_mark = " ✅ Հաստատված" if case.get('is_approved') else ""
+            lines.append(
+                f"   {idx}. {case.get('unique_number', 'N/A')} — {case.get('civil_case_classifier', 'N/A')}\n"
+                f"      Փաստաբան: {lawyer_name}{approved_mark}\n"
+            )
+        return "".join(lines)
+
     def get_advice(self, user_query: str, history: list = None) -> str:
         """
         Processes the legal query by routing it through the classifier first,
@@ -146,13 +173,18 @@ class LegalAgent:
                             f"(ընդհանուր {top_lawyer['total_similar_cases']} նմանատիպ գործից)\n"
                         )
 
+                    similar_cases_block = self._build_similar_cases_block(
+                        search_query, exclude_unique_number=matched_case.get('unique_number')
+                    )
+
                     return (
                         f"🎯 [CLASSIFIER MATCH FOUND]\n"
                         f"🔹 Դասակարգում: {matched_case.get('civil_case_classifier')}\n"
                         f"🔹 Նմանատիպ գործ: {matched_case.get('unique_number')}\n"
                         f"🔹 Հղում: {matched_case.get('link')}\n"
                         f"🔹 Առաջարկվող փաստաբան: {lawyer_display}\n"
-                        f"{top_lawyer_block}\n"
+                        f"{top_lawyer_block}"
+                        f"{similar_cases_block}\n"
                         f"📄 Գործի նախապատմություն / բովանդակության օրինակ:\n{case_excerpt}\n"
                         f"\nՓոխարենը կարող էք բացել հղումը՝ ամբողջ գործը ընթերցելու համար։"
                     )
@@ -254,7 +286,8 @@ class LegalAgent:
                     print(f"⏳ Waiting for model response...")
                     response = self.llm.invoke(prompt)
                     print(f"✅ Model response received ({len(response)} characters)")
-                    return response
+                    similar_cases_block = self._build_similar_cases_block(search_query)
+                    return response + similar_cases_block if similar_cases_block else response
                 except Exception as llm_error:
                     print(f"❌ LLM generation error: {llm_error}")
                     print(f"   Model: {self.model_name}")

@@ -88,6 +88,7 @@ class LegalCaseClassifier:
                 if similarities[idx] > 0.1 and len(similar_cases) < limit:
                     case = self.past_cases[idx].copy()
                     case['similarity_score'] = float(similarities[idx])
+                    case['is_approved'] = self._is_approved_case(case)
                     similar_cases.append(case)
             
             return similar_cases

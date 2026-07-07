@@ -114,15 +114,6 @@ class LegalAIController:
             self.conversation_history.append({"role": "user", "text": user_input})
             self.conversation_history.append({"role": "bot", "text": response})
 
-    def handle_similar_cases(self):
-        query = input("\n🔍 Describe your case for search: ").strip()
-        if query:
-            cases = self.agent.get_similar_cases(query, limit=5)
-            if cases: print(f"\n{self.agent.format_similar_cases_response(cases)}")
-
-    def handle_approved_cases(self):
-        result = self.agent.get_approved_cases_with_lawyers(limit=20)
-        if result.get('approved_cases'): print(f"\n{self.agent.format_approved_cases_response(result)}")
 
 
 def main():
@@ -158,7 +149,7 @@ def main():
     def on_press(key):
         if not state.terminal_input_active:
             try:
-                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 's', 'a', 'q']:
+                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 'q']:
                     state.current_action = key.char
             except: pass
 
@@ -166,7 +157,7 @@ def main():
     if keyboard is not None:
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
-        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [s]imilar, [a]pproved, [q]uit")
+        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [q]uit")
     else:
         print("\n✅ Keyboard listener disabled. Use the main app interface for input.")
 
@@ -180,8 +171,6 @@ def main():
                 if action == 'm': controller.handle_mic()
                 elif action == 't': controller.handle_typed_text()
                 elif action == 'u': controller.handle_upload()
-                elif action == 's': controller.handle_similar_cases()
-                elif action == 'a': controller.handle_approved_cases()
                 elif action == 'q': state.is_running = False
                 state.terminal_input_active = False
 

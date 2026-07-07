@@ -7,46 +7,22 @@ Added functionality to find similar legal cases and display approved cases with 
 
 ## New Features
 
-### 1. **Similar Cases Search** [Press `s`]
-Find legal cases similar to a user's query and export them as text files.
+### 1. **Similar Cases and Approved-Case Info, Surfaced Automatically in Chat Answers**
+The standalone `[s]imilar` and `[a]pproved` CLI controls have been removed. That functionality is now folded directly into the chat answer (`LegalAgent.get_advice()`), the same way the lawyer-search control (`l`) was replaced earlier — no separate lookup step required.
 
 **Features:**
-- Searches for multiple similar cases (up to 5)
-- Shows similarity score for each case
-- Exports all results to a timestamped text file
-- Includes case number, lawyer name, classification, and link
+- Every classifier-match answer now includes a "📚 Նմանատիպ գործեր" (similar cases) block: up to 3 other similar cases (excluding the primary match), each showing case number, classification, lawyer name, and a ✅ "Հաստատված" (approved) marker when applicable
+- The RAG fallback path (Step 4, when no classifier/vector match is found) appends the same similar-cases block after the generated answer, when relevant cases exist
+- Approval detection is unchanged: cases are marked "approved" if they contain keywords like հաստատել, հաստատվել, հաճախել, մեղադրանք, դատել (Armenian) or approved, success, successful, granted, upheld, affirm, confirm (English)
+- `LegalCaseClassifier.find_multiple_similar_cases()` now tags each returned case with `is_approved`, so callers don't need to re-run the approval check themselves
 
 **How to use:**
-1. Press `s` in the main menu
-2. Enter your case description or legal issue
-3. Press ENTER twice to search
-4. Cases are automatically exported to `exports/similar_cases_YYYYMMDD_HHMMSS.txt`
+1. Press `t` and type your legal question (or `m` to speak it), or send it via `POST /api/chat`
+2. The response includes the recommended lawyer, the top lawyer by approved cases among similar matches, and a short list of other similar cases with their lawyers and approval status — all inline
 
 ---
 
-### 2. **Approved Cases & Top Lawyers** [Press `a`]
-Display approved/successful legal cases and ranking of top lawyers by successful case count.
-
-**Features:**
-- Lists all approved/successful cases from the database
-- Shows top 10 lawyers ranked by number of successful cases
-- Includes case statistics and sample cases for each lawyer
-- Full report exported to `exports/approved_cases_YYYYMMDD_HHMMSS.txt`
-
-**How to use:**
-1. Press `a` in the main menu
-2. System automatically searches approved cases
-3. Displays top lawyers with their case counts
-4. Detailed report exported to text file
-
-**Detection Logic:**
-Cases are marked as "approved" if they contain keywords like:
-- Armenian: հաստատել, հաստատվել, հաճախել, մեղադրանք, դատել
-- English: approved, success, successful, granted, upheld, affirm, confirm
-
----
-
-### 3. **Automatic Top Lawyer for Typed/Spoken Questions**
+### 2. **Automatic Top Lawyer for Typed/Spoken Questions**
 When a typed (`t`) or spoken (`m`) question matches a known case via the classifier, the answer now automatically includes the lawyer with the strongest approved-case track record among similar cases — no separate lookup step required.
 
 **Features:**
@@ -62,7 +38,7 @@ The standalone "search cases by lawyer" control (previously `l`) has been remove
 
 ---
 
-### 4. **Real Multi-Turn Conversation Memory**
+### 3. **Real Multi-Turn Conversation Memory**
 Follow-up questions now carry context from earlier turns in the same conversation, instead of every message being answered in isolation.
 
 **Features:**
@@ -78,7 +54,7 @@ Follow-up questions now carry context from earlier turns in the same conversatio
 
 ---
 
-### 5. **Browser-Based Legal AI Chat API**
+### 4. **Browser-Based Legal AI Chat API**
 The FastAPI portal (`main.py`) now exposes the same legal Q&A used by the CLI as a web API, for a B2B partner's frontend (or the built-in demo chat widget) to call directly.
 
 **Endpoints:**
@@ -89,7 +65,7 @@ See [START_HERE.md](START_HERE.md) for the full API contract.
 
 ---
 
-### 6. **Persistent, Hashed-Password Storage for the Web Portal**
+### 5. **Persistent, Hashed-Password Storage for the Web Portal**
 The portal's `users_db`/`bookings_db` were previously plain in-memory Python lists — all data (including plaintext passwords) was lost on every server restart.
 
 **Features:**
@@ -150,66 +126,47 @@ The portal's `users_db`/`bookings_db` were previously plain in-memory Python lis
 
 ## Export Files
 
-All cases are automatically exported to the `exports/` directory with timestamps:
+`get_similar_cases()` and `get_approved_cases_with_lawyers()` on `LegalAgent` still export to the `exports/` directory when called directly (e.g. from a script or a future admin endpoint), but nothing in the CLI or web chat calls them automatically anymore — the same information now surfaces inline in the chat answer instead (see Feature 1 above).
 
-### Similar Cases Export:
+### Similar Cases Export (`get_similar_cases`):
 - **Filename:** `similar_cases_YYYYMMDD_HHMMSS.txt`
-- **Content:**
-  - Original search query
-  - Number of cases found
-  - For each case:
-    - Case number
-    - Lawyer name
-    - Classification
-    - DataLex link
-    - Judicial prehistory (if available)
+- **Content:** original query, number of cases found, and per case: case number, lawyer name, classification, DataLex link, judicial prehistory (if available)
 
-### Approved Cases Export:
+### Approved Cases Export (`get_approved_cases_with_lawyers`):
 - **Filename:** `approved_cases_YYYYMMDD_HHMMSS.txt`
-- **Content:**
-  - Total approved cases count
-  - Number of unique lawyers
-  - For each case:
-    - Case number
-    - Lawyer name (emphasized)
-    - Lawyer department
-    - Classification
-    - Verdict type
-    - Case description
+- **Content:** total approved cases count, number of unique lawyers, and per case: case number, lawyer name, department, classification, verdict type, description
 
 ---
 
 ## Usage Examples
 
-### Example 1: Find Similar Cases
+### Example 1: Typed Question — Divorce, with Inline Similar Cases and Approved Marker
 ```
-Press: s
-Input: "Տեղավճար վեճ բնակելի տանը"
-Output: 
-  ✨ Գտնվել է 3 նման դատական գործ
-  📌 ԳՈՐԾ #1 (համընկնում 85%)
-     🔢 Համար: ՏԱ/0845/12/19
-     ⚖️ Փաստաբան: Հայկ Վարդանյան
-     📋 Դասակարգում: Քաղաքացիական
-     ...
-```
-
-### Example 2: View Approved Cases
-```
-Press: a
+Press: t
+Input: "ինչպես կարող եմ ամուսնալուծվել"
 Output:
-  ✅ ՀԱՍՏԱՏՎԱԾ/ՀԱՋՈՂՎԱԾ ԴԱՏԱԿԱՆ ԳՈՐԾԵՐ
-  Ընդամենը հաստատված գործեր: 42
-  
-  👨‍⚖️ TOP ՓԱՍՏԱԲԱՆՆԵՐ (10)
-  #1 ⭐ Հայկ Վարդանյան
-      Հաջողված գործեր: 8
-  #2 ⭐ Արամ Հայրապետյան
-      Հաջողված գործեր: 7
+  🎯 [CLASSIFIER MATCH FOUND]
+  🔹 Դասակարգում: 4.1 Ամուսնալուծության վերաբերյալ
+  🔹 Նմանատիպ գործ: ԱՐԴ/0161/02/24-1
+  🔹 Հղում: http://www.datalex.am/?app=AppCaseSearch&case_id=ԱՐԴ/0161/02/24-1
+  🔹 Առաջարկվող փաստաբան: Հրանտ Կարապետյան Հրաչյայի
+
+  🏆 Ամենահաջողակ փաստաբանը նմանատիպ գործերում: Սևակ Մարաբյան Նորայրի
+     Հաստատված գործեր: 1 (ընդհանուր 1 նմանատիպ գործից)
+
+  📚 Նմանատիպ գործեր (օգտակար օրինակներ).
+     1. ԵԴ2/8262/02/24-1 — 4.1 Ամուսնալուծության վերաբերյալ
+        Փաստաբան: Աշխեն Դաշյան Յուրիկի, Արման Ներսիսյան Համբարձումի
+     2. ԵԴ2/1882/02/24-1 — 4.1 Ամուսնալուծության վերաբերյալ
+        Փաստաբան: Սևակ Մարաբյան Նորայրի ✅ Հաստատված
+     3. ԱՐԴ/0731/02/24-1 — 4.1 Ամուսնալուծության վերաբերյալ
+        Փաստաբան: Գայանե Հարությունյան Ռոբինզոնի
+
+  📄 Գործի նախապատմություն / բովանդակության օրինակ:
   ...
 ```
 
-### Example 3: Typed Question with Automatic Top Lawyer
+### Example 2: Typed Question with Automatic Top Lawyer
 ```
 Press: t
 Input: "Ժառանգություն ընդունելու վերաբերյալ գործ"
@@ -232,11 +189,9 @@ Output:
 | **m** | Speak via microphone |
 | **t** | Type your legal question |
 | **u** | Upload a legal document |
-| **s** | **[NEW]** Find similar cases |
-| **a** | **[NEW]** Show approved cases & top lawyers |
 | **q** | Quit the application |
 
-Typed (`t`) and spoken (`m`) questions that match a known case now automatically include the top lawyer for similar cases in the answer — no separate control needed.
+Typed (`t`) and spoken (`m`) questions that match a known case now automatically include the top lawyer for similar cases and a short list of other similar cases (with lawyer names and approval status) in the answer — no separate controls needed.
 
 ---
 
