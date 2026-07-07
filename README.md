@@ -51,7 +51,7 @@ pip install -r requirements.txt
 
 All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry.
 
-The typed question path now normalizes Unicode input exactly like microphone input, and after a typed question you can optionally enter a lawyer's name to search that lawyer's cases from the database.
+The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database.
 
 Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
 

@@ -46,20 +46,19 @@ Cases are marked as "approved" if they contain keywords like:
 
 ---
 
-### 3. **Search Cases by Lawyer** [Press `l`]
-Find all cases handled by a specific lawyer.
+### 3. **Automatic Top Lawyer for Typed/Spoken Questions**
+When a typed (`t`) or spoken (`m`) question matches a known case via the classifier, the answer now automatically includes the lawyer with the strongest approved-case track record among similar cases — no separate lookup step required.
 
 **Features:**
-- Search by lawyer name (partial matching supported)
-- Returns up to 10 cases for the lawyer
-- Exports results to text file
-- Shows case details and lawyer information
+- Ranks lawyers among cases similar to the query, not just the single closest match
+- Shows approved-case count out of total similar cases considered
+- Appears inline in the classifier-match response, alongside the originally matched case's recommended lawyer
 
 **How to use:**
-1. Press `l` in the main menu
-2. Enter the lawyer's name
-3. System searches and displays all cases
-4. Results exported to text file
+1. Press `t` and type your legal question (or `m` to speak it)
+2. If a classifier match is found, the response includes a "🏆 Ամենահաջողակ փաստաբանը" (most successful lawyer) block
+
+The standalone "search cases by lawyer" control (previously `l`) has been removed since this information now surfaces automatically as part of the answer.
 
 ---
 
@@ -79,6 +78,7 @@ Find all cases handled by a specific lawyer.
    - `find_approved_cases(limit)` - Get all approved cases
    - `find_cases_by_lawyer(name, limit)` - Get cases by lawyer
    - `get_top_lawyers_by_cases(limit)` - Get top lawyers ranking
+   - `get_top_lawyer_for_query(text, search_limit)` - Rank lawyers by approved cases among cases similar to a query
 
 2. **`src/agents/legal_agent.py`** - Enhanced LegalAgent
    - Added `CaseExportService` initialization
@@ -87,12 +87,12 @@ Find all cases handled by a specific lawyer.
    - `get_lawyer_cases(name, limit)` - Find cases by lawyer
    - `format_similar_cases_response(cases)` - Format similar cases for display
    - `format_approved_cases_response(result)` - Format approved cases for display
+   - `get_advice(user_query)` - Classifier-match responses now include the top lawyer for similar cases automatically
 
 3. **`src/main.py`** - Updated LegalAIController
    - `handle_similar_cases()` - Handler for similar cases search
    - `handle_approved_cases()` - Handler for approved cases display
-   - `handle_search_lawyer()` - Handler for lawyer search
-   - Updated keyboard controls and menu
+   - Updated keyboard controls and menu (standalone lawyer-search control removed)
    - Updated action handler in main loop
 
 ---
@@ -158,14 +158,17 @@ Output:
   ...
 ```
 
-### Example 3: Search by Lawyer
+### Example 3: Typed Question with Automatic Top Lawyer
 ```
-Press: l
-Input: Հայկ Վարդանյան
+Press: t
+Input: "Ժառանգություն ընդունելու վերաբերյալ գործ"
 Output:
-  ✨ Գտնվել է 8 նման դատական գործ
-  📌 ԳՈՐԾ #1
-  📌 ԳՈՐԾ #2
+  🎯 [CLASSIFIER MATCH FOUND]
+  🔹 Դասակարգում: 8.7.5 Ժառանգությունն ընդունելու և ժառանգ...
+  🔹 Առաջարկվող փաստաբան: Հայկ Վարդանյան
+
+  🏆 Ամենահաջողակ փաստաբանը նմանատիպ գործերում: Հայկ Վարդանյան
+     Հաստատված գործեր: 5 (ընդհանուր 5 նմանատիպ գործից)
   ...
 ```
 
@@ -180,8 +183,9 @@ Output:
 | **u** | Upload a legal document |
 | **s** | **[NEW]** Find similar cases |
 | **a** | **[NEW]** Show approved cases & top lawyers |
-| **l** | **[NEW]** Search cases by lawyer |
 | **q** | Quit the application |
+
+Typed (`t`) and spoken (`m`) questions that match a known case now automatically include the top lawyer for similar cases in the answer — no separate control needed.
 
 ---
 

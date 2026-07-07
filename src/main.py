@@ -119,10 +119,6 @@ class LegalAIController:
         result = self.agent.get_approved_cases_with_lawyers(limit=20)
         if result.get('approved_cases'): print(f"\n{self.agent.format_approved_cases_response(result)}")
 
-    def handle_search_lawyer(self):
-        name = input("Enter lawyer's name: ").strip()
-        cases = self.agent.get_lawyer_cases(name, limit=10)
-        if cases: print(f"\n{self.agent.format_similar_cases_response(cases)}")
 
 def main():
     print("⚖️ Armenian Legal AI System Starting...\n")
@@ -158,7 +154,7 @@ def main():
     def on_press(key):
         if not state.terminal_input_active:
             try:
-                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 's', 'a', 'l', 'q']:
+                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 's', 'a', 'q']:
                     state.current_action = key.char
             except: pass
 
@@ -166,7 +162,7 @@ def main():
     if keyboard is not None:
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
-        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [s]imilar, [a]pproved, [l]awyer, [q]uit")
+        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [s]imilar, [a]pproved, [q]uit")
     else:
         print("\n✅ Keyboard listener disabled. Use the main app interface for input.")
 
@@ -182,7 +178,6 @@ def main():
                 elif action == 'u': controller.handle_upload()
                 elif action == 's': controller.handle_similar_cases()
                 elif action == 'a': controller.handle_approved_cases()
-                elif action == 'l': controller.handle_search_lawyer()
                 elif action == 'q': state.is_running = False
                 state.terminal_input_active = False
 

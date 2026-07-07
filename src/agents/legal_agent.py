@@ -105,12 +105,23 @@ class LegalAgent:
                     lawyer = matched_case.get('lawyer_name')
                     lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else "Նշված չէ"
                     case_excerpt = self._truncate_text(matched_case.get('judicial_prehistory', ''), max_chars=1200)
+
+                    top_lawyer_block = ""
+                    top_lawyer = self.classifier.get_top_lawyer_for_query(user_query)
+                    if top_lawyer and top_lawyer['approved_cases'] > 0:
+                        top_lawyer_block = (
+                            f"\n🏆 Ամենահաջողակ փաստաբանը նմանատիպ գործերում: {top_lawyer['lawyer_name']}\n"
+                            f"   Հաստատված գործեր: {top_lawyer['approved_cases']} "
+                            f"(ընդհանուր {top_lawyer['total_similar_cases']} նմանատիպ գործից)\n"
+                        )
+
                     return (
                         f"🎯 [CLASSIFIER MATCH FOUND]\n"
                         f"🔹 Դասակարգում: {matched_case.get('civil_case_classifier')}\n"
                         f"🔹 Նմանատիպ գործ: {matched_case.get('unique_number')}\n"
                         f"🔹 Հղում: {matched_case.get('link')}\n"
-                        f"🔹 Առաջարկվող փաստաբան: {lawyer_display}\n\n"
+                        f"🔹 Առաջարկվող փաստաբան: {lawyer_display}\n"
+                        f"{top_lawyer_block}\n"
                         f"📄 Գործի նախապատմություն / բովանդակության օրինակ:\n{case_excerpt}\n"
                         f"\nՓոխարենը կարող էք բացել հղումը՝ ամբողջ գործը ընթերցելու համար։"
                     )

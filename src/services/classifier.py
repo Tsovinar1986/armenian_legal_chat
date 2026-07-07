@@ -174,6 +174,46 @@ class LegalCaseClassifier:
         
         return lawyer_cases
     
+    def get_top_lawyer_for_query(self, text: str, search_limit: int = 15) -> dict:
+        """
+        Among cases similar to the query, find the lawyer with the most approved cases.
+
+        Args:
+            text: The query text
+            search_limit: How many similar cases to consider when ranking lawyers
+
+        Returns:
+            Dict with the best-ranked lawyer's name and case stats, or None if no lawyer found
+        """
+        similar_cases = self.find_multiple_similar_cases(text, limit=search_limit)
+        if not similar_cases:
+            return None
+
+        lawyer_stats = {}
+        for case in similar_cases:
+            lawyer = (case.get('lawyer_name', '') or '').strip()
+            if not lawyer or lawyer == "(NULL)":
+                continue
+            stats = lawyer_stats.setdefault(lawyer, {'total': 0, 'approved': 0, 'cases': []})
+            stats['total'] += 1
+            stats['cases'].append(case)
+            if self._is_approved_case(case):
+                stats['approved'] += 1
+
+        if not lawyer_stats:
+            return None
+
+        best_name, best_stats = max(
+            lawyer_stats.items(),
+            key=lambda kv: (kv[1]['approved'], kv[1]['total'])
+        )
+        return {
+            'lawyer_name': best_name,
+            'approved_cases': best_stats['approved'],
+            'total_similar_cases': best_stats['total'],
+            'sample_cases': best_stats['cases'][:3]
+        }
+
     def get_top_lawyers_by_cases(self, limit: int = 10) -> list:
         """
         Get the top lawyers by number of successful cases.
