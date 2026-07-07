@@ -88,26 +88,57 @@ class LegalAgent:
             truncated = truncated.rsplit(" ", 1)[0]
         return f"{truncated.strip()}..."
 
-    def get_advice(self, user_query: str) -> str:
+    def _build_search_query(self, user_query: str, history: list = None, max_turns: int = 3) -> str:
+        """Fold recent user turns into the query so follow-up questions (e.g. pronouns,
+        'what about the property?') retrieve relevant cases instead of only the latest sentence."""
+        if not history:
+            return user_query
+        recent_user_turns = [h.get('text', '') for h in history if h.get('role') == 'user'][-max_turns:]
+        recent_user_turns = [t for t in recent_user_turns if t]
+        if not recent_user_turns:
+            return user_query
+        return " ".join(recent_user_turns + [user_query])
+
+    def _format_history_for_prompt(self, history: list, max_turns: int = 6) -> str:
+        if not history:
+            return "Սա այս զրույցի առաջին հարցն է։"
+        trimmed = history[-max_turns:]
+        lines = []
+        for turn in trimmed:
+            speaker = "Հաճախորդ" if turn.get('role') == 'user' else "Օգնական"
+            text = (turn.get('text') or '').strip()
+            if text:
+                lines.append(f"{speaker}: {text}")
+        return "\n".join(lines) if lines else "Սա այս զրույցի առաջին հարցն է։"
+
+    def get_advice(self, user_query: str, history: list = None) -> str:
         """
-        Processes the legal query by routing it through the classifier first, 
+        Processes the legal query by routing it through the classifier first,
         then a strict vector match, and falling back to a structured RAG pipeline.
+
+        :param history: optional list of {"role": "user"|"bot", "text": str} prior turns
+            in this conversation, used to resolve follow-up questions and give the LLM
+            fallback path real conversational context.
         """
+        history = history or []
+
         # Step 1: Interactive check / Clarification hook
         if len(user_query.split()) < 3:
             return "Խնդրում եմ, նկարագրեք ձեր իրավական խնդիրը մի փոքր ավելի մանրամասն, որպեսզի կարողանամ ճշգրիտ նախադեպեր գտնել:"
 
+        search_query = self._build_search_query(user_query, history)
+
         # Step 2: Try the Classifier first (even for voice/text)
         if self.classifier:
             try:
-                matched_case = self.classifier.find_similar_case(user_query)
+                matched_case = self.classifier.find_similar_case(search_query)
                 if matched_case:
                     lawyer = matched_case.get('lawyer_name')
                     lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else "Նշված չէ"
                     case_excerpt = self._truncate_text(matched_case.get('judicial_prehistory', ''), max_chars=1200)
 
                     top_lawyer_block = ""
-                    top_lawyer = self.classifier.get_top_lawyer_for_query(user_query)
+                    top_lawyer = self.classifier.get_top_lawyer_for_query(search_query)
                     if top_lawyer and top_lawyer['approved_cases'] > 0:
                         top_lawyer_block = (
                             f"\n🏆 Ամենահաջողակ փաստաբանը նմանատիպ գործերում: {top_lawyer['lawyer_name']}\n"
@@ -130,7 +161,7 @@ class LegalAgent:
 
         # Step 3: Try Exact Vector DB Precedent Search
         try:
-            results = self.repo.db.similarity_search_with_score(user_query, k=1)
+            results = self.repo.db.similarity_search_with_score(search_query, k=1)
             if results:
                 doc, score = results[0]
                 # Lower scores mean higher semantic similarity
@@ -158,18 +189,19 @@ class LegalAgent:
             print(f"⚠️ Վեկտորային բազայի ստուգման սխալ: {e}")
 
         # Step 4: Fallback to general RAG synthesis
-        return self._generate_rag_response(user_query)
+        return self._generate_rag_response(user_query, history=history, search_query=search_query)
 
-    def _generate_rag_response(self, query: str) -> str:
+    def _generate_rag_response(self, query: str, history: list = None, search_query: str = None) -> str:
+        search_query = search_query or query
         try:
             print(f"🔍 Starting RAG response generation for query: {query[:50]}...")
-            results = self.repo.db.similarity_search_with_score(query, k=3)
+            results = self.repo.db.similarity_search_with_score(search_query, k=3)
             relevant_docs = [doc for doc, score in results if score < 0.8]
             print(f"📚 Found {len(results)} documents in vector DB, {len(relevant_docs)} above relevance threshold")
             context = "\n\n".join([doc.page_content for doc in relevant_docs])
-            
+
             # Find relevant court cases from CSV
-            relevant_cases = self._find_relevant_cases(query, limit=2)
+            relevant_cases = self._find_relevant_cases(search_query, limit=2)
             cases_context = ""
             if relevant_cases:
                 print(f"📋 Found {len(relevant_cases)} relevant court cases from database")
@@ -192,9 +224,14 @@ class LegalAgent:
                 try:
                     print(f"📝 Generating response using model: {self.model_name}")
                     # Create a prompt that instructs the model to answer based on the context
+                    conversation_context = self._format_history_for_prompt(history)
+
                     system_prompt = """Դուք մասնագետ իրավաբան ես, որը փակ համակարգում գործում ես:
-Հաճախորդի հարցին պատասխանիր հետևյալ համատեքստի և իրական դատական գործերի հիման վրա:
+Հաճախորդի հարցին պատասխանիր հետևյալ համատեքստի և իրական դատական գործերի հիման վրա, հաշվի առնելով նաև զրույցի նախորդ ընթացքը:
 Պատասխան տուր կոնկրետ, կառուցված, հասկանալի և հղում կատարիր նմանատիպ դատական գործերի:
+
+ԶՐՈՒՅՑԻ ՆԱԽՈՐԴ ԸՆԹԱՑՔԸ:
+{conversation_context}
 
 ՀԱՄԱՏԵՔՍՏ ԱՎԵԼԱՑՅԱԼ ՏԵՂԵԿԱՏՎՈՒԹՅՈՒՆ:
 {context}
@@ -202,11 +239,16 @@ class LegalAgent:
 ԻՐԱԿԱՆ ԴԱՏԱԿԱՆ ԳՈՐԾԵՐԻ ՕՐԻՆԱԿՆԵՐ:
 {cases_context}
 
-ՀԱՃԱԽՈՐԴԻ ՀԱՐՑ: {query}
+ՀԱՃԱԽՈՐԴԻ ՆՈՐ ՀԱՐՑ: {query}
 
 ՊԱՏԱՍԽԱՆ (հայերեն, մասնագետական և հասկանալի):"""
 
-                    prompt = system_prompt.format(context=context, cases_context=cases_context, query=query)
+                    prompt = system_prompt.format(
+                        conversation_context=conversation_context,
+                        context=context,
+                        cases_context=cases_context,
+                        query=query,
+                    )
                     
                     # Call the LLM to generate response
                     print(f"⏳ Waiting for model response...")

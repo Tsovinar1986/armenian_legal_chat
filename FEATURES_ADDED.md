@@ -62,6 +62,43 @@ The standalone "search cases by lawyer" control (previously `l`) has been remove
 
 ---
 
+### 4. **Real Multi-Turn Conversation Memory**
+Follow-up questions now carry context from earlier turns in the same conversation, instead of every message being answered in isolation.
+
+**Features:**
+- `LegalAgent.get_advice(user_query, history)` folds the last few user turns into the search query, so a follow-up like "what about the property?" after a divorce question retrieves property-related cases instead of returning nothing or an unrelated match
+- The RAG fallback path (Step 4, when no classifier/vector match is found) passes the full recent conversation into the LLM prompt so generated answers stay consistent with what was already discussed
+- Wired into both interfaces:
+  - CLI (`src/main.py`): `LegalAIController` keeps `self.conversation_history` across `t`/`m` turns for the life of the process
+  - Web chat (`main.py`): `/api/chat` keeps history per `session_id` (client must pass the `session_id` returned from the first response on every subsequent call)
+
+**How to use:**
+1. Ask a question, get an answer, then ask a follow-up in the same session (same CLI process, or same `session_id` for the web API)
+2. The assistant resolves the follow-up using the earlier turns
+
+---
+
+### 5. **Browser-Based Legal AI Chat API**
+The FastAPI portal (`main.py`) now exposes the same legal Q&A used by the CLI as a web API, for a B2B partner's frontend (or the built-in demo chat widget) to call directly.
+
+**Endpoints:**
+- `POST /api/chat` — body `{message, session_id}` (session_id optional on the first call), returns `{success, session_id, response}`
+- `GET /api/chat/{session_id}` — returns the full message history for that session
+
+See [START_HERE.md](START_HERE.md) for the full API contract.
+
+---
+
+### 6. **Persistent, Hashed-Password Storage for the Web Portal**
+The portal's `users_db`/`bookings_db` were previously plain in-memory Python lists — all data (including plaintext passwords) was lost on every server restart.
+
+**Features:**
+- `src/db/portal_store.py` persists users and bookings in a local SQLite database (`portal.db`, gitignored)
+- Passwords are hashed with salted PBKDF2 (`hashlib.pbkdf2_hmac`, 390,000 iterations) — never stored or returned in plaintext
+- Registration, login, forgot/reset-password, bookings, and the dashboard all read/write through this store instead of in-memory lists
+
+---
+
 ## File Structure
 
 ### New Files Created:
@@ -70,6 +107,12 @@ The standalone "search cases by lawyer" control (previously `l`) has been remove
    - `export_approved_cases()` - Export approved cases to text
    - `get_export_directory()` - Get exports folder path
    - `list_exports()` - List all exported files
+
+2. **`src/db/portal_store.py`** - SQLite persistence for the web portal
+   - `init_db()`, `hash_password()` / `verify_password()` (salted PBKDF2)
+   - `create_user()`, `find_user()`, `authenticate_user()`, `update_password()`
+   - `set_password_reset_otp()`, `get_password_reset()`, `clear_password_reset()`
+   - `create_booking()`, `list_bookings()`, `recent_bookings()`, `count_users()`, `count_bookings()`, `distinct_roles()`
 
 ### Modified Files:
 1. **`src/services/classifier.py`** - Enhanced LegalCaseClassifier
@@ -87,13 +130,21 @@ The standalone "search cases by lawyer" control (previously `l`) has been remove
    - `get_lawyer_cases(name, limit)` - Find cases by lawyer
    - `format_similar_cases_response(cases)` - Format similar cases for display
    - `format_approved_cases_response(result)` - Format approved cases for display
-   - `get_advice(user_query)` - Classifier-match responses now include the top lawyer for similar cases automatically
+   - `get_advice(user_query, history=None)` - Classifier-match responses now include the top lawyer for similar cases automatically; `history` enables real multi-turn memory
+   - `_build_search_query()`, `_format_history_for_prompt()` - Fold conversation history into search queries and the LLM prompt
 
 3. **`src/main.py`** - Updated LegalAIController
    - `handle_similar_cases()` - Handler for similar cases search
    - `handle_approved_cases()` - Handler for approved cases display
    - Updated keyboard controls and menu (standalone lawyer-search control removed)
    - Updated action handler in main loop
+   - `self.conversation_history` tracked across `t`/`m` turns and passed into `get_advice()`
+   - Fixed `LegalCaseClassifier(data_folder=...)` to point at `src/data` instead of an empty auto-created `data/` folder
+
+4. **`main.py`** - FastAPI portal
+   - `get_legal_agent()` - Lazily initializes the shared `LegalAgent` (Chroma + classifier + Ollama LLM) for the web process
+   - `POST /api/chat`, `GET /api/chat/{session_id}` - Browser/partner-integration chat API with per-session history
+   - Auth, booking, and dashboard endpoints now read/write through `src/db/portal_store.py` instead of in-memory lists
 
 ---
 

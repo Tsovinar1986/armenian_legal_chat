@@ -26,9 +26,11 @@ This repository is an Armenian-language legal assistance prototype that combines
 |------|------|
 | `src/main.py` | Entry point: Ollama + Chroma, vision, voice, hotkeys |
 | `src/services/` | `vision.py`, `voice.py`, `ingestion.py` |
-| `src/agents/legal_agent.py` | Ollama LLM prompts in Armenian + RAG context |
-| `src/db/` | Chroma access and PHP-style case list parsing |
+| `src/agents/legal_agent.py` | Ollama LLM prompts in Armenian + RAG context, multi-turn conversation memory |
+| `src/db/repository.py` | Chroma access and PHP-style case list parsing |
+| `src/db/portal_store.py` | SQLite persistence for the web portal (users, bookings, password resets); hashed passwords |
 | `src/data/` | Case lists, CSVs, exports (large files may be gitignored) |
+| `main.py` | FastAPI web portal: auth, bookings, WebRTC signaling, and the `/api/chat` Legal AI chat API |
 | `notebook/` | EDA, labeling, and modeling experiments |
 
 ## Prerequisites
@@ -51,7 +53,7 @@ pip install -r requirements.txt
 
 All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry.
 
-The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database.
+The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database. Both the CLI (`src/main.py`) and the web chat (`main.py`) keep real multi-turn conversation history: follow-up questions are folded into the search query, and the RAG fallback path passes the conversation into the LLM prompt, so context carries across turns instead of treating every message as a fresh, unrelated question.
 
 Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
 
@@ -70,6 +72,14 @@ When prompted, choose a camera source:
 Controls match the on-screen help: **m** speak, **t** type a question, **u** upload a document, **q** quit and close the video window.
 
 Vector data is stored under `./chroma_legal_data` by default.
+
+## Run the web portal (chat API, auth, bookings, video calls)
+
+```bash
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Open http://localhost:8000 for a demo UI including an Armenian Legal AI chat widget, or integrate directly against `POST /api/chat` and `GET /api/chat/{session_id}` — see [START_HERE.md](START_HERE.md) for the full API contract. Users and bookings are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords instead of the earlier in-memory, plaintext-password version. Chat history is still in-memory per server process (resets on restart).
 
 ## Notebooks
 

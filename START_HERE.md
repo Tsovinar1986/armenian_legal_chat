@@ -26,12 +26,13 @@ Then open:
 
 The portal now provides:
 
-- Individual and lawyer registration
+- Individual and lawyer registration (passwords hashed, stored in SQLite — not plaintext, not in-memory)
 - Sign in flow
 - Dashboard view
 - Calendar booking form
 - WebRTC video call room with signaling
 - Backend-ready sign-up / registration flow for future frontend integration
+- Armenian legal AI chat (`/api/chat`) with multi-turn conversation memory, backed by the case-law classifier + RAG pipeline used by the CLI app
 
 ## 4. Frontend placeholder for sign-up / registration
 
@@ -93,6 +94,15 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - GET /api/bookings
 - POST /api/bookings
 
+### Legal AI chat
+
+- POST /api/chat
+  - Body: `message` (Armenian question text), `session_id` (optional — omit on the first message, then reuse the `session_id` returned in the response for every follow-up so the assistant keeps conversational context)
+  - Response: `success`, `session_id`, `response` (the assistant's answer, including the recommended lawyer and the lawyer with the strongest approved-case record for similar cases)
+- GET /api/chat/{session_id}
+  - Returns the full message history for that session: `[{role: "user"|"bot", text, at}, ...]`
+  - Chat history is in-memory per server process (resets on restart); user/booking data is persisted separately in SQLite
+
 ### Real-time communication
 
 - WS /ws/signaling/{room_id}
@@ -107,9 +117,14 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - Reset password: http://localhost:8000/api/auth/reset-password
 - Bookings: http://localhost:8000/api/bookings
 - Dashboard: http://localhost:8000/api/dashboard
+- Legal AI chat: http://localhost:8000/api/chat
+- Chat history: http://localhost:8000/api/chat/{session_id}
 - WebSocket signaling: ws://localhost:8000/ws/signaling/room-name
 
 ## 8. Notes
 
 - The current video call uses local browser media and a simple signaling server.
-- For production, you should add real authentication, persistent storage, and a TURN/STUN setup for reliable calls.
+- Users and bookings are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords — this survives restarts, unlike the earlier in-memory version.
+- Still missing for production: token/session-based auth (login currently just verifies the password per request, it doesn't issue a session token), a production-grade database if you outgrow SQLite, and a TURN/STUN setup for reliable calls across networks.
+- Chat conversation history is still in-memory per server process and resets on restart; only user/booking data is persisted so far.
+- The `/api/chat` endpoint requires Ollama running locally with the `nomic-embed-text` and `armenia-lawyer-router` models pulled — see `OLLAMA setup.md`.

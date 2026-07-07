@@ -42,6 +42,7 @@ class LegalAIController:
         self.voice = voice
         self.agent = agent
         self.ingestor = ingestor
+        self.conversation_history = []
 
     def handle_upload(self):
         print("\n📂 Enter full path to legal document (txt, xlsx) or video (mp4, mov):")
@@ -90,8 +91,10 @@ class LegalAIController:
             if user_speech:
                 user_speech = unicodedata.normalize('NFC', user_speech).strip()
                 print(f"\n👤 You: {user_speech}")
-                response = self.agent.get_advice(user_speech)
+                response = self.agent.get_advice(user_speech, self.conversation_history)
                 print(f"\n⚖️ Legal AI:\n{response}")
+                self.conversation_history.append({"role": "user", "text": user_speech})
+                self.conversation_history.append({"role": "bot", "text": response})
         except Exception as e:
             print(f"🎙️ Mic error: {e}")
 
@@ -106,8 +109,10 @@ class LegalAIController:
             lines.append(line)
         user_input = unicodedata.normalize('NFC', " ".join(lines).strip())
         if user_input:
-            response = self.agent.get_advice(user_input)
+            response = self.agent.get_advice(user_input, self.conversation_history)
             print(f"\n⚖️ Legal AI:\n{response}")
+            self.conversation_history.append({"role": "user", "text": user_input})
+            self.conversation_history.append({"role": "bot", "text": response})
 
     def handle_similar_cases(self):
         query = input("\n🔍 Describe your case for search: ").strip()
@@ -122,7 +127,6 @@ class LegalAIController:
 
 def main():
     print("⚖️ Armenian Legal AI System Starting...\n")
-    if not os.path.exists("data"): os.makedirs("data")
 
     state = SystemState()
     state.is_running = True
@@ -144,7 +148,7 @@ def main():
     
     voice_service = VoiceService(state)
     vision_service = LegalVisionService(state)
-    classifier_service = LegalCaseClassifier(data_folder="data")
+    classifier_service = LegalCaseClassifier(data_folder="src/data")
     legal_agent = LegalAgent(CompanyLegalRepo(vector_db), state, classifier=classifier_service)
     ingestor = IngestionService(vector_db)
 

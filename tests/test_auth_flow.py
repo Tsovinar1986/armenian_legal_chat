@@ -3,13 +3,13 @@ import unittest
 from fastapi.testclient import TestClient
 
 import main
+from src.db import portal_store
 
 
 class AuthFlowTests(unittest.TestCase):
     def setUp(self):
-        main.users_db.clear()
-        main.bookings_db.clear()
-        main.password_reset_otps.clear()
+        portal_store.clear_all()
+        main.chat_sessions.clear()
         self.client = TestClient(main.app)
 
     def test_register_login_and_reset_password_for_lawyer_with_phone(self):

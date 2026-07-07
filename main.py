@@ -1,17 +1,66 @@
 import json
+import uuid
 from collections import defaultdict
+from datetime import datetime
 from typing import Dict, List, Set
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
+
+from src.db import portal_store
 
 app = FastAPI(title="Armenian Legal Portal", version="1.0.0")
 
-users_db: List[Dict[str, str]] = []
-bookings_db: List[Dict[str, str]] = []
+portal_store.init_db()
+
 room_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
-password_reset_otps: Dict[str, Dict[str, str]] = {}
+# Chat history is per-session and in-memory for v1 (resets on restart); it is fed back
+# into LegalAgent.get_advice() as conversational context, unlike users/bookings which
+# are now persisted in portal_store (SQLite) with hashed passwords.
+chat_sessions: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+
+_legal_agent = None
+_legal_agent_error: str | None = None
+
+
+def get_legal_agent():
+    """Lazily initialize the LegalAgent (Chroma + classifier + Ollama LLM), reused across requests."""
+    global _legal_agent, _legal_agent_error
+    if _legal_agent is not None:
+        return _legal_agent
+    if _legal_agent_error is not None:
+        raise RuntimeError(_legal_agent_error)
+
+    try:
+        from langchain_ollama import OllamaEmbeddings
+        from langchain_chroma import Chroma
+        import chromadb
+        from src.core.state import SystemState
+        from src.services.classifier import LegalCaseClassifier
+        from src.agents.legal_agent import LegalAgent
+        from src.db.repository import CompanyLegalRepo
+
+        embeddings = OllamaEmbeddings(model="nomic-embed-text")
+        client = chromadb.PersistentClient(path="./chroma_legal_data")
+        vector_db = Chroma(collection_name="company_legal_cases", embedding_function=embeddings, client=client)
+        classifier_service = LegalCaseClassifier(data_folder="src/data")
+        _legal_agent = LegalAgent(CompanyLegalRepo(vector_db), SystemState(), classifier=classifier_service)
+        return _legal_agent
+    except Exception as exc:
+        _legal_agent_error = str(exc)
+        raise
+
+
+@app.on_event("startup")
+async def warm_up_legal_agent():
+    try:
+        await run_in_threadpool(get_legal_agent)
+        print("✅ Legal AI chat backend ready")
+    except Exception as exc:
+        print(f"⚠️ Legal AI chat backend failed to initialize: {exc}")
+        print("   The portal will still run, but /api/chat will return an error until this is fixed.")
 
 
 class RegisterRequest(BaseModel):
@@ -48,6 +97,11 @@ class BookingRequest(BaseModel):
     role: str
 
 
+class ChatMessageRequest(BaseModel):
+    message: str
+    session_id: str | None = None
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index():
     return """
@@ -73,6 +127,17 @@ async def index():
         video { width: 100%; background: #000; border-radius: 10px; min-height: 220px; }
         .muted { opacity: 0.8; }
         .small { font-size: 12px; color: #9fb0cb; }
+        .chat-card { margin-top: 18px; }
+        .chat-messages { height: 380px; overflow-y: auto; background: #0c1726; border: 1px solid #23344f; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+        .chat-bubble { max-width: 80%; padding: 10px 14px; border-radius: 14px; white-space: pre-wrap; line-height: 1.4; font-size: 14px; }
+        .chat-bubble.user { align-self: flex-end; background: #2563eb; color: white; border-bottom-right-radius: 4px; }
+        .chat-bubble.bot { align-self: flex-start; background: #16253b; color: #f5f7fa; border: 1px solid #23344f; border-bottom-left-radius: 4px; }
+        .chat-bubble.typing { opacity: 0.6; font-style: italic; }
+        .chat-input-row { display: flex; gap: 8px; margin-top: 10px; }
+        .chat-input-row textarea { margin-top: 0; resize: none; height: 48px; }
+        .chat-input-row button { width: auto; padding: 0 20px; }
+        .chat-header-row { display: flex; justify-content: space-between; align-items: center; }
+        .chat-header-row button { width: auto; padding: 6px 12px; font-size: 12px; }
       </style>
     </head>
     <body>
@@ -80,6 +145,19 @@ async def index():
         <div class="hero">
           <h1>Armenian Legal Portal</h1>
           <p>Register as an individual or lawyer, manage your dashboard, book consultations, and start online video calls.</p>
+        </div>
+
+        <div class="card chat-card">
+          <div class="chat-header-row">
+            <h3>⚖️ Legal AI Chat</h3>
+            <button id="clearChatBtn" class="secondary">Clear chat</button>
+          </div>
+          <p class="small">Type your legal question in Armenian. The assistant answers using the case database and highlights the most successful lawyer for similar cases.</p>
+          <div id="chatMessages" class="chat-messages"></div>
+          <form id="chatForm" class="chat-input-row">
+            <textarea id="chatInput" placeholder="Նկարագրեք ձեր իրավական հարցը..." required></textarea>
+            <button type="submit">Send</button>
+          </form>
         </div>
 
         <div class="grid">
@@ -170,6 +248,77 @@ async def index():
         let localStream = null;
         let ws = null;
         let pendingOffer = false;
+
+        const chatMessages = document.getElementById('chatMessages');
+        const chatForm = document.getElementById('chatForm');
+        const chatInput = document.getElementById('chatInput');
+        const clearChatBtn = document.getElementById('clearChatBtn');
+        let chatSessionId = localStorage.getItem('legalChatSessionId') || null;
+
+        function appendChatBubble(role, text) {
+          const bubble = document.createElement('div');
+          bubble.className = `chat-bubble ${role}`;
+          bubble.textContent = text;
+          chatMessages.appendChild(bubble);
+          chatMessages.scrollTop = chatMessages.scrollHeight;
+          return bubble;
+        }
+
+        function showTyping() {
+          const bubble = appendChatBubble('bot typing', '...');
+          bubble.id = 'typingIndicator';
+        }
+
+        function hideTyping() {
+          const el = document.getElementById('typingIndicator');
+          if (el) el.remove();
+        }
+
+        async function loadChatHistory() {
+          if (!chatSessionId) return;
+          try {
+            const res = await fetch(`/api/chat/${chatSessionId}`);
+            const data = await res.json();
+            (data.messages || []).forEach(m => appendChatBubble(m.role, m.text));
+          } catch (err) {
+            console.error('Failed to load chat history', err);
+          }
+        }
+
+        chatForm.addEventListener('submit', async (event) => {
+          event.preventDefault();
+          const text = chatInput.value.trim();
+          if (!text) return;
+          appendChatBubble('user', text);
+          chatInput.value = '';
+          showTyping();
+
+          try {
+            const res = await fetch('/api/chat', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: text, session_id: chatSessionId })
+            });
+            const data = await res.json();
+            hideTyping();
+            if (data.session_id) {
+              chatSessionId = data.session_id;
+              localStorage.setItem('legalChatSessionId', chatSessionId);
+            }
+            appendChatBubble('bot', data.success ? data.response : (data.message || 'Error contacting Legal AI.'));
+          } catch (err) {
+            hideTyping();
+            appendChatBubble('bot', 'Network error: ' + err.message);
+          }
+        });
+
+        clearChatBtn.addEventListener('click', () => {
+          chatMessages.innerHTML = '';
+          chatSessionId = null;
+          localStorage.removeItem('legalChatSessionId');
+        });
+
+        loadChatHistory();
 
         async function refreshDashboard() {
           const res = await fetch('/api/dashboard');
@@ -355,41 +504,24 @@ async def health():
 
 @app.post("/api/auth/register")
 async def register(request: RegisterRequest):
-    existing = next(
-        (
-            item
-            for item in users_db
-            if (item.get("email") == request.email) or (request.phone_number and item.get("phone_number") == request.phone_number)
-        ),
-        None,
-    )
+    existing = portal_store.find_user(email=request.email, phone_number=request.phone_number or None)
     if existing:
         return {"success": False, "message": "User already exists"}
 
-    user = {
-        "name": request.name,
-        "email": request.email,
-        "phone_number": request.phone_number or "",
-        "password": request.password,
-        "role": request.role,
-        "license_number": request.license_number or "",
-    }
-    users_db.append(user)
+    user = portal_store.create_user(
+        name=request.name,
+        email=request.email,
+        phone_number=request.phone_number or "",
+        password=request.password,
+        role=request.role,
+        license_number=request.license_number or "",
+    )
     return {"success": True, "message": "Registered successfully", "user": user}
 
 
 @app.post("/api/auth/login")
 async def login(request: LoginRequest):
-    user = next(
-        (
-            item
-            for item in users_db
-            if item["role"] == request.role
-            and (item.get("email") == request.identifier or item.get("phone_number") == request.identifier)
-            and item.get("password") == request.password
-        ),
-        None,
-    )
+    user = portal_store.authenticate_user(request.identifier, request.password, request.role)
     if not user:
         return {"success": False, "message": "Account not found or password is incorrect"}
     return {"success": True, "message": "Signed in successfully", "user": user}
@@ -397,71 +529,84 @@ async def login(request: LoginRequest):
 
 @app.post("/api/auth/forgot-password")
 async def forgot_password(request: ForgotPasswordRequest):
-    user = next(
-        (
-            item
-            for item in users_db
-            if item.get("email") == request.identifier or item.get("phone_number") == request.identifier
-        ),
-        None,
-    )
-    if not user:
+    row = portal_store.find_user(email=request.identifier, phone_number=request.identifier)
+    if not row:
         return {"success": False, "message": "Account not found"}
 
-    otp = f"{len(user.get('email', '')) % 10}{len(user.get('phone_number', '')) % 10}{abs(hash(user.get('name', ''))) % 10000:04d}"
-    password_reset_otps[request.identifier] = {"otp": otp, "user_email": user.get("email", "")}
+    otp = f"{len(row['email'] or '') % 10}{len(row['phone_number'] or '') % 10}{abs(hash(row['name'] or '')) % 10000:04d}"
+    portal_store.set_password_reset_otp(request.identifier, otp, row["email"] or "")
     return {"success": True, "message": f"OTP sent via {request.channel}", "otp": otp}
 
 
 @app.post("/api/auth/reset-password")
 async def reset_password(request: ResetPasswordRequest):
-    reset_data = password_reset_otps.get(request.identifier)
-    if not reset_data or reset_data["otp"] != request.otp:
+    reset_row = portal_store.get_password_reset(request.identifier)
+    if not reset_row or reset_row["otp"] != request.otp:
         return {"success": False, "message": "Invalid OTP"}
 
-    user = next(
-        (
-            item
-            for item in users_db
-            if item.get("email") == request.identifier or item.get("phone_number") == request.identifier
-        ),
-        None,
-    )
-    if not user:
+    updated = portal_store.update_password(request.identifier, request.new_password)
+    if not updated:
         return {"success": False, "message": "Account not found"}
 
-    user["password"] = request.new_password
-    password_reset_otps.pop(request.identifier, None)
+    portal_store.clear_password_reset(request.identifier)
     return {"success": True, "message": "Password updated successfully"}
 
 
 @app.get("/api/dashboard")
 async def dashboard():
-    roles = sorted({user["role"] for user in users_db})
+    roles = portal_store.distinct_roles()
     return {
-        "users": len(users_db),
-        "bookings": len(bookings_db),
+        "users": portal_store.count_users(),
+        "bookings": portal_store.count_bookings(),
         "roles": roles or ["individual", "lawyer"],
-        "bookingsList": bookings_db[-5:][::-1],
+        "bookingsList": portal_store.recent_bookings(5),
     }
 
 
 @app.get("/api/bookings")
 async def get_bookings():
-    return {"bookings": bookings_db}
+    return {"bookings": portal_store.list_bookings()}
 
 
 @app.post("/api/bookings")
 async def create_booking(request: BookingRequest):
-    booking = {
-        "title": request.title,
-        "client_name": request.client_name,
-        "lawyer_name": request.lawyer_name,
-        "start_time": request.start_time,
-        "role": request.role,
-    }
-    bookings_db.append(booking)
+    booking = portal_store.create_booking(
+        title=request.title,
+        client_name=request.client_name,
+        lawyer_name=request.lawyer_name,
+        start_time=request.start_time,
+        role=request.role,
+    )
     return {"success": True, "message": "Appointment booked successfully", "booking": booking}
+
+
+@app.post("/api/chat")
+async def chat(request: ChatMessageRequest):
+    session_id = request.session_id or str(uuid.uuid4())
+    user_message = request.message.strip()
+    if not user_message:
+        return {"success": False, "message": "Please type a message.", "session_id": session_id}
+
+    now = datetime.utcnow().isoformat()
+    history = list(chat_sessions[session_id])  # turns before this message, for conversational context
+    chat_sessions[session_id].append({"role": "user", "text": user_message, "at": now})
+
+    try:
+        agent = get_legal_agent()
+        response_text = await run_in_threadpool(agent.get_advice, user_message, history)
+    except Exception as exc:
+        response_text = (
+            "⚠️ Legal AI backend is unavailable right now "
+            f"(is Ollama running? error: {exc})"
+        )
+
+    chat_sessions[session_id].append({"role": "bot", "text": response_text, "at": datetime.utcnow().isoformat()})
+    return {"success": True, "session_id": session_id, "response": response_text}
+
+
+@app.get("/api/chat/{session_id}")
+async def get_chat_history(session_id: str):
+    return {"session_id": session_id, "messages": chat_sessions.get(session_id, [])}
 
 
 @app.websocket("/ws/signaling/{room_id}")

@@ -33,6 +33,8 @@ SpeechRecognition>=3.10
 pyttsx3>=2.90
 PyAudio>=0.2.14
 pynput>=1.7
+gTTS>=2.5
+pygame>=2.5
 
 # --- Notebooks: EDA & labeling (eda_armenian_full_document_text.ipynb, Labeling.ipynb) ---
 jupyter>=1.0
@@ -46,7 +48,8 @@ sentence-transformers>=2.6
 scikit-learn>=1.4
 xgboost>=2.0
 
-# --- Web portal (main.py) ---
+# --- Web portal (main.py) — chat, auth, bookings, WebRTC signaling ---
 uvicorn>=0.24
 fastapi>=0.100
 pydantic>=2.0
+websockets>=12.0

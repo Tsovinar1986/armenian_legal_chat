@@ -12,3 +12,4 @@ armenia_lawyer_router_gguf/
 bin/
 src/data/final_data_with_keywords.csv
 src/data/final_data_with_keywords.xlsx
+portal.db
