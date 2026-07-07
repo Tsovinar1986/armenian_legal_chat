@@ -39,6 +39,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 2. [Ollama](https://ollama.com/) on your PATH. The app expects `nomic-embed-text` for embeddings and `armenia_lawyer_router:latest` (or a compatible tag) for answers. Pull with `ollama pull nomic-embed-text` and `ollama pull armenia_lawyer_router`, or change the names in code.
 3. Webcam and microphone for the full interactive experience.
 4. Network access for Google Web Speech API when using the voice service.
+5. At least 8GB RAM works but is tight — Ollama keeps the LLM (~1.7GB) and embedding model (~274MB) resident while serving, on top of everything else running on your machine. Close other memory-heavy apps before running the CLI or portal if you notice heavy swapping/slowdowns. 16GB is recommended if you'll also use the webcam features.
 
 ## Setup
 
@@ -72,6 +73,8 @@ When prompted, choose a camera source:
 Controls match the on-screen help: **m** speak, **t** type a question, **u** upload a document, **q** quit and close the video window.
 
 Vector data is stored under `./chroma_legal_data` by default.
+
+The vision stack (PyTorch + YOLOv8 + MediaPipe Pose/FaceMesh, `src/services/vision_classifier.py`) is loaded lazily on first actual use — a webcam frame or an uploaded video (`u`) — not at startup. If you answer `n` to the webcam prompt and never upload a video, that whole stack (and its memory footprint, ~270MB+) is never loaded, which matters on memory-constrained machines (e.g. 8GB RAM).
 
 ## Run the web portal (chat API, auth, bookings, video calls)
 

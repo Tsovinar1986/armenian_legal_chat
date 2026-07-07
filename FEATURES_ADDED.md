@@ -75,6 +75,19 @@ The portal's `users_db`/`bookings_db` were previously plain in-memory Python lis
 
 ---
 
+### 6. **Lazy-Loaded Vision Models (Memory Fix for 8GB Machines)**
+`LegalVisionService` used to construct `VisionClassifier` (PyTorch + YOLOv8 + MediaPipe Pose/FaceMesh) unconditionally at startup — even when the webcam was disabled and no video was uploaded, which is the case for every text/voice-only chat session and every web chat request.
+
+**Features:**
+- `src/services/vision.py`'s `classifier` is now a lazy property: the import and model construction only happen on the first real webcam frame (`process_frame`) or uploaded video (`process_video`)
+- Measured ~268MB saved (plus load time) for sessions that never touch vision — verified constructing `LegalVisionService` loads zero `torch`/`mediapipe`/`ultralytics` modules until `.classifier` is actually accessed
+- Matters most on memory-constrained machines (e.g. 8GB RAM), where the OS was already swapping before this app even started
+
+**How to use:**
+No action needed — answering `n` to the webcam prompt (or never pressing `u` to upload a video) now genuinely skips loading the vision stack, instead of loading it anyway.
+
+---
+
 ## File Structure
 
 ### New Files Created:
@@ -101,19 +114,18 @@ The portal's `users_db`/`bookings_db` were previously plain in-memory Python lis
 
 2. **`src/agents/legal_agent.py`** - Enhanced LegalAgent
    - Added `CaseExportService` initialization
-   - `get_similar_cases(query, limit)` - Find and export similar cases
-   - `get_approved_cases_with_lawyers(limit)` - Get approved cases with lawyer stats
-   - `get_lawyer_cases(name, limit)` - Find cases by lawyer
+   - `get_similar_cases(query, limit)` - Find and export similar cases (no longer wired to a CLI control, but still callable directly)
+   - `get_approved_cases_with_lawyers(limit)` - Get approved cases with lawyer stats (same as above)
+   - `get_lawyer_cases(name, limit)` - Find cases by lawyer (same as above)
    - `format_similar_cases_response(cases)` - Format similar cases for display
    - `format_approved_cases_response(result)` - Format approved cases for display
-   - `get_advice(user_query, history=None)` - Classifier-match responses now include the top lawyer for similar cases automatically; `history` enables real multi-turn memory
+   - `get_advice(user_query, history=None)` - Classifier-match and RAG-fallback responses now include the top lawyer, an inline similar-cases block, and real multi-turn memory via `history`
    - `_build_search_query()`, `_format_history_for_prompt()` - Fold conversation history into search queries and the LLM prompt
+   - `_build_similar_cases_block()` - Render similar cases with lawyer name + approved marker inline
 
 3. **`src/main.py`** - Updated LegalAIController
-   - `handle_similar_cases()` - Handler for similar cases search
-   - `handle_approved_cases()` - Handler for approved cases display
-   - Updated keyboard controls and menu (standalone lawyer-search control removed)
-   - Updated action handler in main loop
+   - Removed `handle_similar_cases()`, `handle_approved_cases()`, and `handle_search_lawyer()` — that information now surfaces automatically in `get_advice()` answers instead of separate `s`/`a`/`l` controls
+   - Keyboard controls reduced to `[m]ic, [t]ype, [u]pload, [q]uit`
    - `self.conversation_history` tracked across `t`/`m` turns and passed into `get_advice()`
    - Fixed `LegalCaseClassifier(data_folder=...)` to point at `src/data` instead of an empty auto-created `data/` folder
 
@@ -121,6 +133,9 @@ The portal's `users_db`/`bookings_db` were previously plain in-memory Python lis
    - `get_legal_agent()` - Lazily initializes the shared `LegalAgent` (Chroma + classifier + Ollama LLM) for the web process
    - `POST /api/chat`, `GET /api/chat/{session_id}` - Browser/partner-integration chat API with per-session history
    - Auth, booking, and dashboard endpoints now read/write through `src/db/portal_store.py` instead of in-memory lists
+
+5. **`src/services/vision.py`** - LegalVisionService
+   - `classifier` is now a lazy property instead of an eager `__init__` attribute, deferring the `VisionClassifier` (PyTorch + YOLOv8 + MediaPipe) import and construction until first real use
 
 ---
 
