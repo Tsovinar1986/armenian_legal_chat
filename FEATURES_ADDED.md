@@ -104,6 +104,25 @@ No action needed — this runs automatically and transparently ahead of every an
 
 ---
 
+### 8. **Therapist Chat, Webcam Mental-Health Nudge, and Stripe Payments**
+Mirrors the lawyer-side chat/booking features for a therapist/mental-health track, plus payment processing for both.
+
+**Features:**
+- **Webcam mental-health concern nudge**: `LegalVisionService` (`src/services/vision.py`) tracks a rolling 30-frame window of detected emotions; if ≥60% are sad/angry, it draws an on-screen suggestion to talk to a therapist and exposes the flag via `SystemState.get_mental_health_concern()`/`get_mental_health_suggestion()`. Clears itself once the pattern isn't sustained. Heuristic on facial expression only — not a diagnosis.
+- **`MentalHealthQAClassifier`** (`src/services/classifier.py`): TF-IDF retrieval matcher over `src/data/student_mh_counseling_100k_with_label_column.csv` (~100k question/answer/label rows — labels include depression, stress, seeking help, suicidal thoughts). Lazily loaded/indexed on first use, mirroring the zero-shot risk model's pattern.
+- **`POST /api/therapist-chat`, `GET /api/therapist-chat/{session_id}`**: a separate conversation surface from `/api/chat`, backed by `MentalHealthQAClassifier`. Always runs the keyword + zero-shot crisis checks first — a retrieved Q&A answer never substitutes for `CRISIS_RESPONSE_HY`, even though the dataset itself contains "suicidal thoughts"-labeled rows.
+- **Stripe payments** (card, Apple Pay, Google Pay) for both lawyer and therapist consultations: `POST /api/payments/create-intent`, `GET /api/payments/{payment_id}`, `POST /api/payments/webhook`, backed by a new `payments` table in `src/db/portal_store.py`. Configured via `STRIPE_SECRET_KEY`/`STRIPE_PUBLISHABLE_KEY`/`STRIPE_WEBHOOK_SECRET` env vars; Apple Pay also needs domain verification in the Stripe Dashboard.
+- **Backend-ready placeholder pages**: `/therapist` (chat demo + booking link), `/mood-tracking` (web fallback landing page), `/pay` (Stripe Payment Element demo) — same "demo, not final UI" status as the existing auth/booking page.
+- **Bookings extended for therapists**: `bookings.provider_type` (`"lawyer"` or `"therapist"`, defaults to `"lawyer"`) added via an idempotent migration so existing rows/callers are unaffected; registration/login already accepted any `role` string, so `role: "therapist"` needed no backend change.
+
+**How to use:**
+1. Set `STRIPE_SECRET_KEY`/`STRIPE_PUBLISHABLE_KEY`/`STRIPE_WEBHOOK_SECRET` if you want payments to work (optional otherwise)
+2. Visit `/therapist` for the supportive-chat demo, or call `POST /api/therapist-chat` directly
+3. Visit `/pay?consultation_type=lawyer` or `/pay?consultation_type=therapist` to test a payment
+4. Therapist-matching to a *specific* human therapist (mirroring the lawyer top-lawyer ranking) is not built yet — this is Q&A retrieval, not provider matching
+
+---
+
 ## File Structure
 
 ### New Files Created:
@@ -133,6 +152,7 @@ No action needed — this runs automatically and transparently ahead of every an
    - `get_top_lawyer_for_query(text, search_limit)` - Rank lawyers by approved cases among cases similar to a query
    - `classify_mental_health_risk(text, risk_threshold)` - Zero-shot mental-health risk classification (lazy-loaded `transformers` pipeline)
    - `zero_shot_classifier` - Lazy property holding the HuggingFace zero-shot pipeline
+   - `MentalHealthQAClassifier` (new class in the same file) - `find_similar_answer(text, min_similarity)`, lazy-loaded TF-IDF retrieval over the counseling Q&A dataset
 
 2. **`src/agents/legal_agent.py`** - Enhanced LegalAgent
    - Added `CaseExportService` initialization
@@ -158,6 +178,12 @@ No action needed — this runs automatically and transparently ahead of every an
 
 5. **`src/services/vision.py`** - LegalVisionService
    - `classifier` is now a lazy property instead of an eager `__init__` attribute, deferring the `VisionClassifier` (PyTorch + YOLOv8 + MediaPipe) import and construction until first real use
+   - `_check_mental_health_concern(emotion, negative_labels)` - Rolling-window sad/angry detection that sets `SystemState.mental_health_concern`
+
+6. **`src/core/state.py`** - SystemState
+   - `mental_health_concern`, `mental_health_suggestion` fields + `update_mental_health_concern()`, `get_mental_health_concern()`, `get_mental_health_suggestion()`
+
+7. **`src/db/portal_store.py`** - Added `payments` table + `create_payment()`, `update_payment_status()`, `get_payment()`, `get_payment_by_intent()`; added `provider_type` column to `bookings` via an idempotent migration in `init_db()`
 
 ---
 

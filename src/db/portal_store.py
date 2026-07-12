@@ -45,11 +45,29 @@ def init_db() -> None:
                 role TEXT NOT NULL
             )
         """)
+        # Migration: older DBs created before provider_type existed. lawyer_name is
+        # kept as-is (documented in the mobile API contract in START_HERE.md) and
+        # now holds either a lawyer's or a therapist's name; provider_type says which.
+        existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(bookings)").fetchall()}
+        if "provider_type" not in existing_columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'lawyer'")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS password_resets (
                 identifier TEXT PRIMARY KEY,
                 otp TEXT NOT NULL,
                 user_email TEXT
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                consultation_type TEXT NOT NULL,
+                customer_name TEXT NOT NULL,
+                amount_cents INTEGER NOT NULL,
+                currency TEXT NOT NULL,
+                stripe_payment_intent_id TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL
             )
         """)
         conn.commit()
@@ -175,12 +193,20 @@ def update_password(identifier: str, new_password: str) -> bool:
         conn.close()
 
 
-def create_booking(title: str, client_name: str, lawyer_name: str, start_time: str, role: str) -> Dict:
+def create_booking(
+    title: str,
+    client_name: str,
+    lawyer_name: str,
+    start_time: str,
+    role: str,
+    provider_type: str = "lawyer",
+) -> Dict:
     conn = _connect()
     try:
         cursor = conn.execute(
-            "INSERT INTO bookings (title, client_name, lawyer_name, start_time, role) VALUES (?, ?, ?, ?, ?)",
-            (title, client_name, lawyer_name, start_time, role),
+            "INSERT INTO bookings (title, client_name, lawyer_name, start_time, role, provider_type) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (title, client_name, lawyer_name, start_time, role, provider_type),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM bookings WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -232,6 +258,62 @@ def distinct_roles() -> List[str]:
         conn.close()
 
 
+def create_payment(
+    consultation_type: str,
+    customer_name: str,
+    amount_cents: int,
+    currency: str,
+    stripe_payment_intent_id: str,
+    status: str,
+    created_at: str,
+) -> Dict:
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO payments (consultation_type, customer_name, amount_cents, currency, "
+            "stripe_payment_intent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (consultation_type, customer_name, amount_cents, currency, stripe_payment_intent_id, status, created_at),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM payments WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def update_payment_status(stripe_payment_intent_id: str, status: str) -> bool:
+    conn = _connect()
+    try:
+        cursor = conn.execute(
+            "UPDATE payments SET status = ? WHERE stripe_payment_intent_id = ?",
+            (status, stripe_payment_intent_id),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_payment(payment_id: int) -> Optional[Dict]:
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def get_payment_by_intent(stripe_payment_intent_id: str) -> Optional[Dict]:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM payments WHERE stripe_payment_intent_id = ?", (stripe_payment_intent_id,)
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def clear_all() -> None:
     """Wipe all rows from every table. Test-only helper — not used by the app itself."""
     conn = _connect()
@@ -239,6 +321,7 @@ def clear_all() -> None:
         conn.execute("DELETE FROM users")
         conn.execute("DELETE FROM bookings")
         conn.execute("DELETE FROM password_resets")
+        conn.execute("DELETE FROM payments")
         conn.commit()
     finally:
         conn.close()

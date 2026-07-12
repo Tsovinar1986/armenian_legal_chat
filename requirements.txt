@@ -57,3 +57,8 @@ uvicorn>=0.24
 fastapi>=0.100
 pydantic>=2.0
 websockets>=12.0
+# Payments (Apple Pay / Google Pay / card) for lawyer & therapist consultations.
+# Requires STRIPE_SECRET_KEY (and STRIPE_WEBHOOK_SECRET for the webhook) env vars —
+# see README.md "Payments" section. Apple Pay/Google Pay require domain
+# verification in the Stripe Dashboard, which is outside this codebase.
+stripe>=9.0

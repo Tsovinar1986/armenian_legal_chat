@@ -6,6 +6,11 @@ This repository is an Armenian-language legal assistance prototype that combines
 
 ## Remaining work
 - Add object detection support for action and scene understanding.
+- Therapist-matching (mirroring the lawyer top-lawyer/similar-cases ranking, using `get_top_lawyer_for_query`-style logic) is not built — `MentalHealthQAClassifier` currently does supportive Q&A retrieval only, not matching to a specific human therapist.
+- Payments are wired end-to-end against Stripe's API but need real `STRIPE_SECRET_KEY`/`STRIPE_PUBLISHABLE_KEY`/`STRIPE_WEBHOOK_SECRET` values and Apple Pay domain verification (both in the Stripe Dashboard) before they'll work outside of tests.
+- `/mood-tracking` and `/therapist` are backend-ready placeholder pages (same status as the auth/booking demo UI) — a B2B partner's real frontend still needs to be built against the underlying APIs.
+- `chat_sessions` and `therapist_chat_sessions` in `main.py` are still in-memory only and reset on server restart; only users/bookings/payments are persisted in SQLite.
+- Booking a therapist session currently only wires through to payment (`/pay?consultation_type=therapist`); it doesn't yet also create a calendar `booking` record automatically.
 
 ## Completed vision updates
 - Shared classifier module implemented in `src/services/vision_classifier.py` for action and emotion inference.
@@ -25,10 +30,10 @@ This repository is an Armenian-language legal assistance prototype that combines
 | Path | Role |
 |------|------|
 | `src/main.py` | Entry point: Ollama + Chroma, vision, voice, hotkeys |
-| `src/services/` | `vision.py`, `voice.py`, `ingestion.py`, `classifier.py` (case matching + zero-shot mental-health risk), `crisis_detection.py` (keyword crisis check) |
+| `src/services/` | `vision.py`, `voice.py`, `ingestion.py`, `classifier.py` (case matching + zero-shot mental-health risk + `MentalHealthQAClassifier`), `crisis_detection.py` (keyword crisis check) |
 | `src/agents/legal_agent.py` | Ollama LLM prompts in Armenian + RAG context, multi-turn conversation memory |
 | `src/db/repository.py` | Chroma access and PHP-style case list parsing |
-| `src/db/portal_store.py` | SQLite persistence for the web portal (users, bookings, password resets); hashed passwords |
+| `src/db/portal_store.py` | SQLite persistence for the web portal (users, bookings, password resets, payments); hashed passwords |
 | `src/data/` | Case lists, CSVs, exports (large files may be gitignored) |
 | `main.py` | FastAPI web portal: auth, bookings, WebRTC signaling, and the `/api/chat` Legal AI chat API |
 | `notebook/` | EDA, labeling, and modeling experiments |
@@ -64,6 +69,31 @@ Every call to `LegalAgent.get_advice()` (CLI and `/api/chat`) is screened for se
 2. **Zero-shot classification** (`LegalCaseClassifier.classify_mental_health_risk()` in `src/services/classifier.py`) — a second, heavier signal using a multilingual NLI model (`MoritzLaurer/mDeBERTa-v3-base-mnli-xnli`, loaded lazily via HuggingFace `transformers` on first use) to catch phrasings the fixed keyword list misses. It classifies the message against `["suicide or self-harm risk", "acute emotional or mental health crisis", "general legal question", "casual conversation"]` and only adds a positive signal above a confidence threshold — it never overrides or weakens the keyword check.
 
 If either signal fires, `get_advice()` returns `CRISIS_RESPONSE_HY` immediately — real emergency numbers and a recommendation to contact a trusted person or a licensed therapist — without touching the classifier, vector DB, or LLM. This is a heuristic safety net, not a clinical assessment, and must never be presented as one.
+
+### Webcam mental-health concern nudge
+
+`LegalVisionService` (`src/services/vision.py`) tracks a rolling window of the last 30 per-frame emotions detected by `VisionClassifier.detect_emotion()`. If at least 60% of that window is sad/angry, it draws a soft on-screen suggestion to talk to a therapist and sets `SystemState.get_mental_health_concern()` / `get_mental_health_suggestion()` so other code (e.g. a future web/mobile client) can read the flag. This clears itself once the mood pattern is no longer sustained. It is a coarse heuristic on facial expression, not a diagnosis, and only ever suggests talking to a therapist.
+
+### Therapist chat (supportive Q&A, not legal advice)
+
+`POST /api/therapist-chat` / `GET /api/therapist-chat/{session_id}` (and the demo page at `/therapist`) provide a separate, non-legal conversation surface backed by `MentalHealthQAClassifier` (`src/services/classifier.py`), a TF-IDF retrieval matcher over `src/data/student_mh_counseling_100k_with_label_column.csv` (question/answer/label — labels like `depression`, `stress`, `seeking help`, `suicidal thoughts`). It mirrors `LegalCaseClassifier`'s similarity approach but is lazily loaded (indexing ~100k rows is comparatively expensive) and only built on first use.
+
+Every message still goes through the same crisis check as legal chat first (keyword, then zero-shot if the legal agent's classifier is available) — a matched Q&A answer is never returned in place of `CRISIS_RESPONSE_HY`, even though the dataset itself contains "suicidal thoughts"-labeled rows. Non-crisis responses are always labeled as a supportive-conversation demo, not a licensed therapist, with a link to `/therapist` to book a real session.
+
+### Payments (Apple Pay / Google Pay / card) via Stripe
+
+`POST /api/payments/create-intent`, `GET /api/payments/{payment_id}`, and `POST /api/payments/webhook` in `main.py` handle payment for both lawyer and therapist consultations through [Stripe](https://stripe.com). Stripe's Payment Element (used on the `/pay` demo page) shows card, Apple Pay, and Google Pay automatically for eligible browsers/devices from one integration — no separate code per payment method.
+
+Requires these environment variables (never commit real keys):
+- `STRIPE_SECRET_KEY` — server-side key, required for `create-intent` to work.
+- `STRIPE_PUBLISHABLE_KEY` — sent to the client to initialize Stripe.js.
+- `STRIPE_WEBHOOK_SECRET` — required for `/api/payments/webhook` to verify Stripe's signature.
+
+Apple Pay additionally requires verifying your domain in the Stripe Dashboard — that step happens outside this codebase. Payments are recorded in the `payments` table in `portal.db` via `src/db/portal_store.py` (`create_payment`, `update_payment_status`, `get_payment`).
+
+### Therapist role and bookings
+
+Registration/login already accept `role: "therapist"` alongside `"individual"`/`"lawyer"` (the field was never restricted to just two values). `POST /api/bookings` now also accepts an optional `provider_type` (`"lawyer"` or `"therapist"`, defaults to `"lawyer"` for backward compatibility with existing callers) so the same booking flow covers both consultation types; `lawyer_name` continues to hold whichever provider's name applies. `/mood-tracking` is a web fallback landing page for mood tracking when not on the mobile app, linking to `/therapist`.
 
 Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
 

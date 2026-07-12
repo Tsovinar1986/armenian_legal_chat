@@ -12,6 +12,14 @@ pip install -r requirements.txt
 
 ## 2. Run the web portal
 
+Optional — set these before starting the server if you want payments to work (card/Apple Pay/Google Pay for lawyer and therapist consultations). Without them, everything else still runs; `/api/payments/create-intent` just returns a clear "not configured" error.
+
+```bash
+export STRIPE_SECRET_KEY="sk_test_..."        # from https://dashboard.stripe.com/apikeys
+export STRIPE_PUBLISHABLE_KEY="pk_test_..."
+export STRIPE_WEBHOOK_SECRET="whsec_..."      # only needed for /api/payments/webhook
+```
+
 Start the FastAPI app:
 
 ```bash
@@ -21,6 +29,9 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 Then open:
 
 - http://localhost:8000
+- http://localhost:8000/therapist — supportive Q&A chat demo (not a legal chat) + link to book/pay for a real session
+- http://localhost:8000/mood-tracking — web fallback mood-tracking landing page
+- http://localhost:8000/pay?consultation_type=lawyer (or `therapist`) — Stripe payment demo
 
 ### If port 8000 is already in use
 
@@ -110,6 +121,7 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - GET /api/dashboard
 - GET /api/bookings
 - POST /api/bookings
+  - Body: title, client_name, lawyer_name (holds the provider's name — lawyer or therapist), start_time, role, `provider_type` (optional, `"lawyer"` or `"therapist"`, defaults to `"lawyer"`)
 
 ### Legal AI chat
 
@@ -120,6 +132,25 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - GET /api/chat/{session_id}
   - Returns the full message history for that session: `[{role: "user"|"bot", text, at}, ...]`
   - Chat history is in-memory per server process (resets on restart); user/booking data is persisted separately in SQLite
+
+### Therapist chat (supportive Q&A, not legal advice, not a licensed therapist)
+
+- POST /api/therapist-chat
+  - Body: `message`, `session_id` (optional, same pattern as /api/chat)
+  - Response: `success`, `session_id`, `response` — a retrieved answer from `MentalHealthQAClassifier` (trained on `src/data/student_mh_counseling_100k_with_label_column.csv`), always screened for crisis signals first, same as /api/chat
+- GET /api/therapist-chat/{session_id}
+  - Returns the full message history for that session
+
+### Payments (Stripe — card, Apple Pay, Google Pay)
+
+- POST /api/payments/create-intent
+  - Body: `consultation_type` (`"lawyer"` or `"therapist"`), `customer_name`, `amount_cents`, `currency` (default `"usd"`)
+  - Response: `success`, `payment_id`, `client_secret`, `publishable_key` — feed `client_secret` + `publishable_key` into Stripe.js on the client to complete payment (see `/pay` for a reference implementation)
+  - Returns `success: false` with a clear message if `STRIPE_SECRET_KEY` isn't set on the server
+- GET /api/payments/{payment_id}
+  - Returns the stored payment record (status, amount, consultation_type, etc.)
+- POST /api/payments/webhook
+  - Configure this URL in the Stripe Dashboard so payment status stays correct even if the client disconnects before confirming
 
 ### Real-time communication
 
@@ -137,13 +168,20 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - Dashboard: http://localhost:8000/api/dashboard
 - Legal AI chat: http://localhost:8000/api/chat
 - Chat history: http://localhost:8000/api/chat/{session_id}
+- Therapist chat: http://localhost:8000/api/therapist-chat
+- Therapist chat history: http://localhost:8000/api/therapist-chat/{session_id}
+- Payments: http://localhost:8000/api/payments/create-intent
+- Mood tracking (web fallback): http://localhost:8000/mood-tracking
+- Talk to a therapist (demo): http://localhost:8000/therapist
+- Payment demo page: http://localhost:8000/pay
 - WebSocket signaling: ws://localhost:8000/ws/signaling/room-name
 
 ## 8. Notes
 
 - The current video call uses local browser media and a simple signaling server.
-- Users and bookings are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords — this survives restarts, unlike the earlier in-memory version.
-- Still missing for production: token/session-based auth (login currently just verifies the password per request, it doesn't issue a session token), a production-grade database if you outgrow SQLite, and a TURN/STUN setup for reliable calls across networks.
-- Chat conversation history is still in-memory per server process and resets on restart; only user/booking data is persisted so far.
+- Users, bookings, and payments are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords — this survives restarts, unlike the earlier in-memory version.
+- Still missing for production: token/session-based auth (login currently just verifies the password per request, it doesn't issue a session token), a production-grade database if you outgrow SQLite, a TURN/STUN setup for reliable calls across networks, and real Stripe keys + Apple Pay domain verification (payments return a clear "not configured" error without them).
+- Chat conversation history (both `/api/chat` and `/api/therapist-chat`) is still in-memory per server process and resets on restart; only user/booking/payment data is persisted so far.
+- Therapist-matching to a specific human therapist (mirroring the lawyer top-lawyer ranking) is not built — `/api/therapist-chat` is supportive Q&A retrieval only.
 - The `/api/chat` endpoint requires Ollama running locally with the `nomic-embed-text` and `armenia-lawyer-router` models pulled — see `OLLAMA setup.md`.
 - The zero-shot mental-health risk model (`transformers` + `torch`, ~280MB) downloads on first use, the first time any message reaches the crisis-check step — expect a one-time delay on the very first chat message after starting the server.

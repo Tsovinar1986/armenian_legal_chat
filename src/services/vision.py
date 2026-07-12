@@ -1,7 +1,24 @@
+from collections import deque
+
 import cv2
 import numpy as np
 import unicodedata
 from PIL import Image, ImageDraw, ImageFont
+
+# How many recent frames' emotions to consider, and what fraction of them must be
+# negative (sad/angry) before surfacing a therapist suggestion. This is a coarse,
+# heuristic UX nudge based on facial-expression heuristics in VisionClassifier — it
+# is NOT a clinical assessment and must never be presented as one. It only ever
+# suggests talking to a therapist; it never claims to detect a diagnosis.
+MENTAL_HEALTH_CONCERN_WINDOW = 30
+MENTAL_HEALTH_CONCERN_RATIO = 0.6
+
+MENTAL_HEALTH_SUGGESTION_HY = (
+    "💙 Վերջին րոպեների ընթացքում նկատվում է տխուր/անհանգիստ տրամադրություն։ "
+    "Սա միայն դեմքի արտահայտության վրա հիմնված մոտավոր դիտարկում է, ոչ թե "
+    "ախտորոշում։ Եթե դա իրական է Ձեզ համար, խորհուրդ ենք տալիս զրուցել "
+    "որակավորված թերապևտի հետ կամ գրել մեր չաթում աջակցության համար։"
+)
 
 
 class LegalVisionService:
@@ -9,6 +26,7 @@ class LegalVisionService:
         self.state = state
         self._classifier = None
         self.font_path = "/Library/Fonts/Arial Unicode.ttf"
+        self._recent_emotions = deque(maxlen=MENTAL_HEALTH_CONCERN_WINDOW)
 
     @property
     def classifier(self):
@@ -20,6 +38,25 @@ class LegalVisionService:
             from src.services.vision_classifier import VisionClassifier
             self._classifier = VisionClassifier()
         return self._classifier
+
+    def _check_mental_health_concern(self, emotion, negative_labels):
+        """Track a rolling window of recent per-frame emotions and flag a soft
+        therapist suggestion once a sustained-enough share are negative.
+
+        A single sad/angry frame is noisy (lighting, a blink, a frown mid-sentence)
+        so this only fires on a sustained pattern across MENTAL_HEALTH_CONCERN_WINDOW
+        frames, and clears itself once the pattern is no longer sustained.
+        """
+        if not emotion:
+            return
+        self._recent_emotions.append(emotion)
+        negative_count = sum(1 for e in self._recent_emotions if e in negative_labels)
+        ratio = negative_count / len(self._recent_emotions)
+        is_full_window = len(self._recent_emotions) == self._recent_emotions.maxlen
+        if is_full_window and ratio >= MENTAL_HEALTH_CONCERN_RATIO:
+            self.state.update_mental_health_concern(True, MENTAL_HEALTH_SUGGESTION_HY)
+        else:
+            self.state.update_mental_health_concern(False)
 
     def _draw_unicode_text(self, frame, text, position):
         img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -95,6 +132,14 @@ class LegalVisionService:
         self.state.update_emotion(emotion)
         if emotion:
             frame = self._draw_unicode_text(frame, f"Էմոցիան: {emotion}", (10, 70))
+
+        negative_labels = {
+            self.classifier.emotion_map.get('sad'),
+            self.classifier.emotion_map.get('angry'),
+        }
+        self._check_mental_health_concern(emotion, negative_labels)
+        if self.state.get_mental_health_concern():
+            frame = self._draw_unicode_text(frame, "💙 Առաջարկվում է խոսել թերապևտի հետ", (10, 100))
 
         self.state.update_actions(list(set(actions_in_frame)))
         return frame

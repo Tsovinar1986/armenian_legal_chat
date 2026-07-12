@@ -328,5 +328,88 @@ class LegalCaseClassifier:
             key=lambda x: x[1]['count'],
             reverse=True
         )[:limit]
-        
+
         return sorted_lawyers
+
+
+DEFAULT_MENTAL_HEALTH_QA_CSV = "src/data/student_mh_counseling_100k_with_label_column.csv"
+
+
+class MentalHealthQAClassifier:
+    """Retrieval-style Q&A matcher over a labeled counseling-conversation dataset
+    (default: src/data/student_mh_counseling_100k_with_label_column.csv, columns
+    question/answer/label — labels like "depression", "stress", "seeking help",
+    "suicidal thoughts"). Mirrors LegalCaseClassifier's TF-IDF + cosine-similarity
+    approach, but over counseling Q&A pairs instead of legal case prehistories.
+
+    This is a supportive-conversation helper, not a diagnosis or a licensed
+    therapist substitute — every response using it should say so. It must never
+    be used in place of the crisis/safety check in src/services/crisis_detection.py
+    and LegalCaseClassifier.classify_mental_health_risk: a real crisis signal
+    should always short-circuit to CRISIS_RESPONSE_HY, not to a retrieved answer,
+    even though this dataset itself contains "suicidal thoughts"-labeled rows.
+
+    Loading and indexing ~100k rows is comparatively expensive, so — like the
+    zero-shot risk model — it only happens lazily, on first actual use.
+    """
+
+    def __init__(self, csv_path: str = DEFAULT_MENTAL_HEALTH_QA_CSV, max_rows: int = None):
+        self.csv_path = csv_path
+        self.max_rows = max_rows
+        self.qa_pairs = []
+        self.vectorizer = TfidfVectorizer(max_features=8000, stop_words="english")
+        self.tfidf_matrix = None
+        self._loaded = False
+
+    def _ensure_loaded(self):
+        if self._loaded:
+            return
+        self._load_csv()
+        self._train()
+        self._loaded = True
+
+    def _load_csv(self):
+        import csv
+        if not os.path.exists(self.csv_path):
+            print(f"⚠️ Mental-health Q&A dataset not found: {self.csv_path}")
+            return
+        csv.field_size_limit(10 * 1024 * 1024)
+        with open(self.csv_path, newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for i, row in enumerate(reader):
+                if self.max_rows is not None and i >= self.max_rows:
+                    break
+                question = (row.get('question') or '').strip()
+                answer = (row.get('answer') or '').strip()
+                label = (row.get('label') or '').strip()
+                if question and answer:
+                    self.qa_pairs.append({'question': question, 'answer': answer, 'label': label})
+        print(f"✅ Mental-health Q&A classifier: loaded {len(self.qa_pairs)} question/answer pairs.")
+
+    def _train(self):
+        if self.qa_pairs:
+            corpus = [qa['question'] for qa in self.qa_pairs]
+            self.tfidf_matrix = self.vectorizer.fit_transform(corpus)
+            print(f"✅ Mental-health Q&A classifier: indexed {len(self.qa_pairs)} pairs.")
+
+    def find_similar_answer(self, text: str, min_similarity: float = 0.2) -> dict:
+        """Find the closest matching question in the dataset and return its answer.
+
+        Returns a dict with question/answer/label/similarity_score, or None if the
+        dataset is unavailable or nothing clears min_similarity.
+        """
+        if not text or not text.strip():
+            return None
+        self._ensure_loaded()
+        if self.tfidf_matrix is None or not self.qa_pairs:
+            return None
+
+        new_vec = self.vectorizer.transform([text])
+        similarities = cosine_similarity(new_vec, self.tfidf_matrix).flatten()
+        idx = similarities.argmax()
+        if similarities[idx] < min_similarity:
+            return None
+
+        match = self.qa_pairs[idx].copy()
+        match['similarity_score'] = float(similarities[idx])
+        return match

@@ -16,6 +16,13 @@ class SystemState:
         self.active_category = "General"
         self.file_context = ""
 
+        # Set when LegalVisionService observes a sustained negative facial-affect
+        # pattern (see src/services/vision.py). This is a soft UX nudge, not a
+        # diagnosis — it only suggests talking to a therapist, it never claims to
+        # detect a clinical condition.
+        self.mental_health_concern = False
+        self.mental_health_suggestion = ""
+
     def update_actions(self, actions):
         with self._lock:
             self.people_actions = actions
@@ -32,6 +39,11 @@ class SystemState:
         with self._lock:
             self.file_context = context
 
+    def update_mental_health_concern(self, flag: bool, suggestion: str = ""):
+        with self._lock:
+            self.mental_health_concern = flag
+            self.mental_health_suggestion = suggestion if flag else ""
+
     def get_actions(self):
         with self._lock:
             return self.people_actions.copy()
@@ -46,4 +58,12 @@ class SystemState:
 
     def get_context(self):
         with self._lock:
-            return self.file_context    
+            return self.file_context
+
+    def get_mental_health_concern(self):
+        with self._lock:
+            return self.mental_health_concern
+
+    def get_mental_health_suggestion(self):
+        with self._lock:
+            return self.mental_health_suggestion
