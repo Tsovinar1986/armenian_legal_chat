@@ -19,6 +19,10 @@ Pillow>=10.0
 
 # --- Case classifier (src/services/classifier.py) ---
 beautifulsoup4>=4.12
+# Zero-shot mental-health risk screening (classify_mental_health_risk); loaded lazily
+# on first use, downloads the mDeBERTa-v3-base-mnli-xnli model (~280MB) on first run.
+transformers>=4.40
+torch>=2.2
 
 # --- Case export to Word (src/services/case_export.py) ---
 python-docx>=1.1

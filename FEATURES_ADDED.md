@@ -88,6 +88,22 @@ No action needed — answering `n` to the webcam prompt (or never pressing `u` t
 
 ---
 
+### 7. **Crisis/Safety Detection + Zero-Shot Mental-Health Risk Screening**
+Every message passed to `LegalAgent.get_advice()` (CLI and `/api/chat`) is now screened for self-harm/suicide risk language before any legal-advice logic runs, using two layered, complementary signals.
+
+**Features:**
+- **Step 0 — keyword check** (`src/services/crisis_detection.py`): fast, deterministic substring matching against a fixed list of Armenian and English self-harm/suicide phrases (`detect_crisis_signal()`)
+- **Step 0b — zero-shot classification** (`LegalCaseClassifier.classify_mental_health_risk()` in `src/services/classifier.py`): a second, heavier signal using a multilingual NLI model (`MoritzLaurer/mDeBERTa-v3-base-mnli-xnli`, via HuggingFace `transformers`) to catch phrasings the fixed keyword list misses — no labeled training data needed, since zero-shot classification matches the message against candidate labels (`"suicide or self-harm risk"`, `"acute emotional or mental health crisis"`, `"general legal question"`, `"casual conversation"`) at inference time
+- The zero-shot signal only *adds* coverage — it never overrides or weakens the keyword check, and only flags risk when its top label is a risk label above a confidence threshold (default 0.55)
+- Both the model pipeline (`zero_shot_classifier` property) and the vision stack use the same lazy-loading pattern: `transformers`/`torch` are only imported and the ~280MB model only downloaded on the first actual message that reaches this check, not at classifier construction time
+- If either signal fires, `get_advice()` returns `CRISIS_RESPONSE_HY` immediately — real Armenia emergency numbers (911/102/103) plus a recommendation to contact a trusted person or licensed therapist — without touching the case classifier, vector DB, or LLM
+- This is a heuristic safety net, not a clinical assessment tool, and is documented as such in code comments; it can both miss risk and over-trigger on unrelated text
+
+**How to use:**
+No action needed — this runs automatically and transparently ahead of every answer, for both the CLI (`t`/`m`) and `POST /api/chat`.
+
+---
+
 ## File Structure
 
 ### New Files Created:
@@ -97,7 +113,11 @@ No action needed — answering `n` to the webcam prompt (or never pressing `u` t
    - `get_export_directory()` - Get exports folder path
    - `list_exports()` - List all exported files
 
-2. **`src/db/portal_store.py`** - SQLite persistence for the web portal
+2. **`src/services/crisis_detection.py`** - Keyword-based crisis/safety detection
+   - `detect_crisis_signal(text)` - Armenian/English self-harm/suicide phrase check
+   - `CRISIS_RESPONSE_HY` - Response text with real emergency contact numbers
+
+3. **`src/db/portal_store.py`** - SQLite persistence for the web portal
    - `init_db()`, `hash_password()` / `verify_password()` (salted PBKDF2)
    - `create_user()`, `find_user()`, `authenticate_user()`, `update_password()`
    - `set_password_reset_otp()`, `get_password_reset()`, `clear_password_reset()`
@@ -111,6 +131,8 @@ No action needed — answering `n` to the webcam prompt (or never pressing `u` t
    - `find_cases_by_lawyer(name, limit)` - Get cases by lawyer
    - `get_top_lawyers_by_cases(limit)` - Get top lawyers ranking
    - `get_top_lawyer_for_query(text, search_limit)` - Rank lawyers by approved cases among cases similar to a query
+   - `classify_mental_health_risk(text, risk_threshold)` - Zero-shot mental-health risk classification (lazy-loaded `transformers` pipeline)
+   - `zero_shot_classifier` - Lazy property holding the HuggingFace zero-shot pipeline
 
 2. **`src/agents/legal_agent.py`** - Enhanced LegalAgent
    - Added `CaseExportService` initialization
@@ -119,7 +141,7 @@ No action needed — answering `n` to the webcam prompt (or never pressing `u` t
    - `get_lawyer_cases(name, limit)` - Find cases by lawyer (same as above)
    - `format_similar_cases_response(cases)` - Format similar cases for display
    - `format_approved_cases_response(result)` - Format approved cases for display
-   - `get_advice(user_query, history=None)` - Classifier-match and RAG-fallback responses now include the top lawyer, an inline similar-cases block, and real multi-turn memory via `history`
+   - `get_advice(user_query, history=None)` - Classifier-match and RAG-fallback responses now include the top lawyer, an inline similar-cases block, and real multi-turn memory via `history`; also runs the Step 0/0b crisis and mental-health risk checks before any of the above
    - `_build_search_query()`, `_format_history_for_prompt()` - Fold conversation history into search queries and the LLM prompt
    - `_build_similar_cases_block()` - Render similar cases with lawyer name + approved marker inline
 

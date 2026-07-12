@@ -25,7 +25,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 | Path | Role |
 |------|------|
 | `src/main.py` | Entry point: Ollama + Chroma, vision, voice, hotkeys |
-| `src/services/` | `vision.py`, `voice.py`, `ingestion.py` |
+| `src/services/` | `vision.py`, `voice.py`, `ingestion.py`, `classifier.py` (case matching + zero-shot mental-health risk), `crisis_detection.py` (keyword crisis check) |
 | `src/agents/legal_agent.py` | Ollama LLM prompts in Armenian + RAG context, multi-turn conversation memory |
 | `src/db/repository.py` | Chroma access and PHP-style case list parsing |
 | `src/db/portal_store.py` | SQLite persistence for the web portal (users, bookings, password resets); hashed passwords |
@@ -39,7 +39,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 2. [Ollama](https://ollama.com/) on your PATH. The app expects `nomic-embed-text` for embeddings and `armenia_lawyer_router:latest` (or a compatible tag) for answers. Pull with `ollama pull nomic-embed-text` and `ollama pull armenia_lawyer_router`, or change the names in code.
 3. Webcam and microphone for the full interactive experience.
 4. Network access for Google Web Speech API when using the voice service.
-5. At least 8GB RAM works but is tight — Ollama keeps the LLM (~1.7GB) and embedding model (~274MB) resident while serving, on top of everything else running on your machine. Close other memory-heavy apps before running the CLI or portal if you notice heavy swapping/slowdowns. 16GB is recommended if you'll also use the webcam features.
+5. At least 8GB RAM works but is tight — Ollama keeps the LLM (~1.7GB) and embedding model (~274MB) resident while serving, on top of everything else running on your machine. Close other memory-heavy apps before running the CLI or portal if you notice heavy swapping/slowdowns. 16GB is recommended if you'll also use the webcam features. The zero-shot mental-health risk model (~280MB, `transformers` + `torch`) is loaded lazily on the first message of each process's lifetime — expect a one-time delay and memory bump the first time `get_advice()` is called.
 
 ## Setup
 
@@ -55,6 +55,15 @@ pip install -r requirements.txt
 All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry.
 
 The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database. Both the CLI (`src/main.py`) and the web chat (`main.py`) keep real multi-turn conversation history: follow-up questions are folded into the search query, and the RAG fallback path passes the conversation into the LLM prompt, so context carries across turns instead of treating every message as a fresh, unrelated question.
+
+### Crisis/safety and mental-health risk screening
+
+Every call to `LegalAgent.get_advice()` (CLI and `/api/chat`) is screened for self-harm/suicide risk language before any legal-advice logic runs, using two layered signals:
+
+1. **Keyword check** (`src/services/crisis_detection.py`) — fast, deterministic substring matching against a fixed Armenian/English phrase list.
+2. **Zero-shot classification** (`LegalCaseClassifier.classify_mental_health_risk()` in `src/services/classifier.py`) — a second, heavier signal using a multilingual NLI model (`MoritzLaurer/mDeBERTa-v3-base-mnli-xnli`, loaded lazily via HuggingFace `transformers` on first use) to catch phrasings the fixed keyword list misses. It classifies the message against `["suicide or self-harm risk", "acute emotional or mental health crisis", "general legal question", "casual conversation"]` and only adds a positive signal above a confidence threshold — it never overrides or weakens the keyword check.
+
+If either signal fires, `get_advice()` returns `CRISIS_RESPONSE_HY` immediately — real emergency numbers and a recommendation to contact a trusted person or a licensed therapist — without touching the classifier, vector DB, or LLM. This is a heuristic safety net, not a clinical assessment, and must never be presented as one.
 
 Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
 

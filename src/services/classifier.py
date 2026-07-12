@@ -4,13 +4,45 @@ from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+# Multilingual NLI model used for zero-shot mental-health risk screening (see
+# classify_mental_health_risk below). No task-specific training data or fine-tuning
+# is required — candidate labels are matched against the text via natural-language
+# inference at inference time.
+ZERO_SHOT_MODEL_NAME = "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
+
+MENTAL_HEALTH_LABELS = [
+    "suicide or self-harm risk",
+    "acute emotional or mental health crisis",
+    "general legal question",
+    "casual conversation",
+]
+
+MENTAL_HEALTH_RISK_LABELS = {
+    "suicide or self-harm risk",
+    "acute emotional or mental health crisis",
+}
+
+
+def _load_zero_shot_pipeline(model_name: str):
+    """Import transformers and build the zero-shot classification pipeline.
+
+    Split out as a standalone function (rather than inlined in the property below)
+    so tests can monkeypatch this one call instead of reaching into transformers'
+    internal lazy-module machinery.
+    """
+    from transformers import pipeline
+    return pipeline("zero-shot-classification", model=model_name)
+
+
 class LegalCaseClassifier:
-    def __init__(self, data_folder="data"):
+    def __init__(self, data_folder="data", zero_shot_model: str = None):
         self.data_folder = data_folder
         self.past_cases = []
         self.vectorizer = TfidfVectorizer(max_features=5000)
         self.tfidf_matrix = None
-        
+        self.zero_shot_model_name = zero_shot_model or ZERO_SHOT_MODEL_NAME
+        self._zero_shot_classifier = None
+
         # Ավտոմատ բեռնել տվյալները ստեղծվելու պահին
         self._load_all_prehistories()
         self._train_classifier()
@@ -50,6 +82,59 @@ class LegalCaseClassifier:
             corpus = [case['judicial_prehistory'] for case in self.past_cases]
             self.tfidf_matrix = self.vectorizer.fit_transform(corpus)
             print(f"✅ Classifier: Indexed {len(self.past_cases)} historical cases.")
+
+    @property
+    def zero_shot_classifier(self):
+        """Lazily load the HuggingFace zero-shot classification pipeline.
+
+        The model (~280MB) is only downloaded/loaded into memory on first actual
+        use of classify_mental_health_risk, not at LegalCaseClassifier construction
+        time — same lazy-loading pattern used for the vision stack in
+        src/services/vision.py, so text-only sessions that never trigger a
+        mental-health risk check never pay this memory/import cost.
+        """
+        if self._zero_shot_classifier is None:
+            print(f"🧠 Loading zero-shot classification model ({self.zero_shot_model_name})...")
+            self._zero_shot_classifier = _load_zero_shot_pipeline(self.zero_shot_model_name)
+        return self._zero_shot_classifier
+
+    def classify_mental_health_risk(self, text: str, risk_threshold: float = 0.55) -> dict:
+        """
+        Zero-shot classify whether text signals a mental-health crisis (suicide/
+        self-harm risk or acute emotional distress) — no labeled training data
+        needed, the model matches the text against MENTAL_HEALTH_LABELS via NLI.
+
+        This is a second, heavier-weight signal meant to run alongside the fast
+        keyword check in src/services/crisis_detection.py — it exists to catch
+        phrasings the keyword list misses, not to replace it. It is not a clinical
+        assessment and must never be presented as one.
+
+        Args:
+            text: The message text to screen.
+            risk_threshold: Minimum confidence on the top label before treating the
+                text as a risk signal.
+
+        Returns:
+            dict with keys is_risk (bool), label (str), score (float), and
+            scores (dict of all candidate labels to their scores), or None if the
+            text is empty or classification fails (e.g. model unavailable).
+        """
+        if not text or not text.strip():
+            return None
+        try:
+            result = self.zero_shot_classifier(text, candidate_labels=MENTAL_HEALTH_LABELS)
+        except Exception as e:
+            print(f"⚠️ Zero-shot mental-health classification failed: {e}")
+            return None
+
+        top_label = result["labels"][0]
+        top_score = float(result["scores"][0])
+        return {
+            "is_risk": top_label in MENTAL_HEALTH_RISK_LABELS and top_score >= risk_threshold,
+            "label": top_label,
+            "score": top_score,
+            "scores": dict(zip(result["labels"], (float(s) for s in result["scores"]))),
+        }
 
     def find_similar_case(self, text):
         if self.tfidf_matrix is None or not self.past_cases:

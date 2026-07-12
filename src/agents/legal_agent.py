@@ -4,6 +4,7 @@ import os
 import csv
 from langchain_ollama import OllamaLLM
 from src.services.case_export import CaseExportService
+from src.services.crisis_detection import detect_crisis_signal, CRISIS_RESPONSE_HY
 
 class LegalAgent:
     def __init__(self, repo, state, classifier=None, model=None):
@@ -148,6 +149,22 @@ class LegalAgent:
             fallback path real conversational context.
         """
         history = history or []
+
+        # Step 0: Crisis/safety check — takes priority over everything else below,
+        # including the short-query clarification check, since a crisis message can
+        # be very short ("ուզում եմ մեռնել"). See src/services/crisis_detection.py.
+        if detect_crisis_signal(user_query):
+            return CRISIS_RESPONSE_HY
+
+        # Step 0b: Zero-shot mental-health risk screen — a second, heavier signal
+        # that catches phrasings the fixed keyword list in Step 0 misses. Only
+        # widens coverage (adds a positive), never overrides a keyword hit; if the
+        # model is unavailable or fails, classify_mental_health_risk returns None
+        # and we fall through to normal legal-advice handling below.
+        if self.classifier:
+            risk = self.classifier.classify_mental_health_risk(user_query)
+            if risk and risk["is_risk"]:
+                return CRISIS_RESPONSE_HY
 
         # Step 1: Interactive check / Clarification hook
         if len(user_query.split()) < 3:
