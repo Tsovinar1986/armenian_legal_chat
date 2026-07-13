@@ -1064,8 +1064,8 @@ async def therapist_chat(request: ChatMessageRequest):
     else:
         try:
             agent = get_legal_agent()
-            if agent.classifier:
-                risk = await run_in_threadpool(agent.classifier.classify_mental_health_risk, user_message)
+            if agent.risk_classifier:
+                risk = await run_in_threadpool(agent.risk_classifier.classify_mental_health_risk, user_message)
                 if risk and risk["is_risk"]:
                     response_text = CRISIS_RESPONSE_HY
         except Exception:

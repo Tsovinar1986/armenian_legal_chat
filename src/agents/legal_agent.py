@@ -4,6 +4,7 @@ import os
 import csv
 from langchain_ollama import OllamaLLM
 from src.services.case_export import CaseExportService
+from src.services.classifier import MentalHealthRiskClassifier
 from src.services.crisis_detection import detect_crisis_signal, CRISIS_RESPONSE_HY
 
 class LegalAgent:
@@ -21,7 +22,10 @@ class LegalAgent:
         self.model_name = model or "armenia-lawyer-router"
         self.court_cases = []
         self.export_service = CaseExportService()  # Initialize export service
-        
+        # Second, heavier crisis-screening signal (see Step 0b in get_advice) —
+        # cheap to construct, only trains its Random Forest lazily on first use.
+        self.risk_classifier = MentalHealthRiskClassifier()
+
         # Load court papers data from CSV
         self._load_court_cases()
         
@@ -156,13 +160,15 @@ class LegalAgent:
         if detect_crisis_signal(user_query):
             return CRISIS_RESPONSE_HY
 
-        # Step 0b: Zero-shot mental-health risk screen — a second, heavier signal
-        # that catches phrasings the fixed keyword list in Step 0 misses. Only
-        # widens coverage (adds a positive), never overrides a keyword hit; if the
-        # model is unavailable or fails, classify_mental_health_risk returns None
-        # and we fall through to normal legal-advice handling below.
-        if self.classifier:
-            risk = self.classifier.classify_mental_health_risk(user_query)
+        # Step 0b: Random Forest mental-health risk screen — a second, heavier
+        # signal that catches phrasings the fixed keyword list in Step 0 misses.
+        # Only widens coverage (adds a positive), never overrides a keyword hit;
+        # if training data is unavailable or classification fails,
+        # classify_mental_health_risk returns None and we fall through to
+        # normal legal-advice handling below. See MentalHealthRiskClassifier in
+        # src/services/classifier.py.
+        if self.risk_classifier:
+            risk = self.risk_classifier.classify_mental_health_risk(user_query)
             if risk and risk["is_risk"]:
                 return CRISIS_RESPONSE_HY
 

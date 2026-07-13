@@ -4,44 +4,13 @@ from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# Multilingual NLI model used for zero-shot mental-health risk screening (see
-# classify_mental_health_risk below). No task-specific training data or fine-tuning
-# is required — candidate labels are matched against the text via natural-language
-# inference at inference time.
-ZERO_SHOT_MODEL_NAME = "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
-
-MENTAL_HEALTH_LABELS = [
-    "suicide or self-harm risk",
-    "acute emotional or mental health crisis",
-    "general legal question",
-    "casual conversation",
-]
-
-MENTAL_HEALTH_RISK_LABELS = {
-    "suicide or self-harm risk",
-    "acute emotional or mental health crisis",
-}
-
-
-def _load_zero_shot_pipeline(model_name: str):
-    """Import transformers and build the zero-shot classification pipeline.
-
-    Split out as a standalone function (rather than inlined in the property below)
-    so tests can monkeypatch this one call instead of reaching into transformers'
-    internal lazy-module machinery.
-    """
-    from transformers import pipeline
-    return pipeline("zero-shot-classification", model=model_name)
-
 
 class LegalCaseClassifier:
-    def __init__(self, data_folder="data", zero_shot_model: str = None):
+    def __init__(self, data_folder="data"):
         self.data_folder = data_folder
         self.past_cases = []
         self.vectorizer = TfidfVectorizer(max_features=5000)
         self.tfidf_matrix = None
-        self.zero_shot_model_name = zero_shot_model or ZERO_SHOT_MODEL_NAME
-        self._zero_shot_classifier = None
 
         # Ավտոմատ բեռնել տվյալները ստեղծվելու պահին
         self._load_all_prehistories()
@@ -82,59 +51,6 @@ class LegalCaseClassifier:
             corpus = [case['judicial_prehistory'] for case in self.past_cases]
             self.tfidf_matrix = self.vectorizer.fit_transform(corpus)
             print(f"✅ Classifier: Indexed {len(self.past_cases)} historical cases.")
-
-    @property
-    def zero_shot_classifier(self):
-        """Lazily load the HuggingFace zero-shot classification pipeline.
-
-        The model (~280MB) is only downloaded/loaded into memory on first actual
-        use of classify_mental_health_risk, not at LegalCaseClassifier construction
-        time — same lazy-loading pattern used for the vision stack in
-        src/services/vision.py, so text-only sessions that never trigger a
-        mental-health risk check never pay this memory/import cost.
-        """
-        if self._zero_shot_classifier is None:
-            print(f"🧠 Loading zero-shot classification model ({self.zero_shot_model_name})...")
-            self._zero_shot_classifier = _load_zero_shot_pipeline(self.zero_shot_model_name)
-        return self._zero_shot_classifier
-
-    def classify_mental_health_risk(self, text: str, risk_threshold: float = 0.55) -> dict:
-        """
-        Zero-shot classify whether text signals a mental-health crisis (suicide/
-        self-harm risk or acute emotional distress) — no labeled training data
-        needed, the model matches the text against MENTAL_HEALTH_LABELS via NLI.
-
-        This is a second, heavier-weight signal meant to run alongside the fast
-        keyword check in src/services/crisis_detection.py — it exists to catch
-        phrasings the keyword list misses, not to replace it. It is not a clinical
-        assessment and must never be presented as one.
-
-        Args:
-            text: The message text to screen.
-            risk_threshold: Minimum confidence on the top label before treating the
-                text as a risk signal.
-
-        Returns:
-            dict with keys is_risk (bool), label (str), score (float), and
-            scores (dict of all candidate labels to their scores), or None if the
-            text is empty or classification fails (e.g. model unavailable).
-        """
-        if not text or not text.strip():
-            return None
-        try:
-            result = self.zero_shot_classifier(text, candidate_labels=MENTAL_HEALTH_LABELS)
-        except Exception as e:
-            print(f"⚠️ Zero-shot mental-health classification failed: {e}")
-            return None
-
-        top_label = result["labels"][0]
-        top_score = float(result["scores"][0])
-        return {
-            "is_risk": top_label in MENTAL_HEALTH_RISK_LABELS and top_score >= risk_threshold,
-            "label": top_label,
-            "score": top_score,
-            "scores": dict(zip(result["labels"], (float(s) for s in result["scores"]))),
-        }
 
     def find_similar_case(self, text):
         if self.tfidf_matrix is None or not self.past_cases:
@@ -413,3 +329,165 @@ class MentalHealthQAClassifier:
         match = self.qa_pairs[idx].copy()
         match['similarity_score'] = float(similarities[idx])
         return match
+
+
+# Known labels in student_mh_counseling_100k_with_label_column.csv. Filters out
+# the rare malformed row(s) where a truncated/garbled sentence ends up in the
+# label column instead of a real category (e.g. a stray CSV line break).
+KNOWN_MENTAL_HEALTH_LABELS = {
+    "depression", "stress", "seeking help", "self-esteem issues",
+    "relationship problems", "positive mental state", "coping strategies",
+    "suicidal thoughts", "anxiety", "academic pressure", "grief",
+    "anger management", "loneliness", "substance abuse",
+    "general well-being", "eating disorders",
+}
+
+# Labels whose predicted probability counts as a risk signal. Conservative on
+# purpose — mirrors what the earlier zero-shot check flagged (suicide/self-harm
+# risk specifically), not general distress like "stress" or "grief".
+MENTAL_HEALTH_RISK_LABELS = {"suicidal thoughts"}
+
+
+class MentalHealthRiskClassifier:
+    """Multi-class mental-health risk classifier: SentenceTransformer embeddings
+    -> PCA -> RandomForestClassifier, the same technique used in
+    notebook/Modeling.ipynb's Random Forest experiment, but trained on
+    src/data/student_mh_counseling_100k_with_label_column.csv's question/label
+    columns instead of the notebook's legal-verdict dataset (that model's
+    learned labels — legal decision outcomes — have nothing to do with mental-
+    health risk, so it can't be reused directly; only the modeling technique is
+    reused here).
+
+    Replaces the earlier zero-shot NLI-based risk check as the second, heavier
+    signal alongside the fast keyword check in src/services/crisis_detection.py.
+    Predicts the full label set (depression, stress, seeking help, suicidal
+    thoughts, ...) rather than a plain risk/non-risk binary, then flags is_risk
+    from the predicted probability of the "suicidal thoughts" class specifically
+    (see MENTAL_HEALTH_RISK_LABELS) — it only ever adds coverage on top of the
+    keyword check, never overrides it, and is not a clinical assessment.
+
+    Embedding and training on the full ~100k rows is too slow to do lazily on
+    first request (likely minutes on CPU), so training uses a bounded random
+    subsample instead — embedded and fit once, on first actual use, and cached
+    in-process for the classifier's lifetime (same lazy-loading philosophy as
+    the other classifiers in this file, just with a capped training set size to
+    keep the first-use delay reasonable).
+    """
+
+    def __init__(
+        self,
+        csv_path: str = DEFAULT_MENTAL_HEALTH_QA_CSV,
+        sample_size: int = 8000,
+        embedding_model_name: str = "all-mpnet-base-v2",
+        pca_components: int = 20,
+        random_state: int = 42,
+    ):
+        self.csv_path = csv_path
+        self.sample_size = sample_size
+        self.embedding_model_name = embedding_model_name
+        self.pca_components = pca_components
+        self.random_state = random_state
+        self._embedder = None
+        self._pca = None
+        self._label_encoder = None
+        self._rf = None
+        self._trained = False
+
+    def _load_training_sample(self):
+        import csv
+        import random
+
+        if not os.path.exists(self.csv_path):
+            print(f"⚠️ Mental-health risk classifier: dataset not found: {self.csv_path}")
+            return [], []
+
+        csv.field_size_limit(10 * 1024 * 1024)
+        rows = []
+        with open(self.csv_path, newline='', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                question = (row.get('question') or '').strip()
+                label = (row.get('label') or '').strip()
+                if question and label in KNOWN_MENTAL_HEALTH_LABELS:
+                    rows.append((question, label))
+
+        if not rows:
+            return [], []
+        if len(rows) > self.sample_size:
+            random.Random(self.random_state).shuffle(rows)
+            rows = rows[:self.sample_size]
+
+        texts, labels = zip(*rows)
+        return list(texts), list(labels)
+
+    def _ensure_trained(self):
+        if self._trained:
+            return
+        self._trained = True  # set first so a failed/empty attempt doesn't retry every call
+
+        texts, labels = self._load_training_sample()
+        if not texts:
+            return
+
+        from sentence_transformers import SentenceTransformer
+        from sklearn.decomposition import PCA
+        from sklearn.ensemble import RandomForestClassifier
+        from sklearn.preprocessing import LabelEncoder
+
+        print(f"🧠 Training mental-health risk classifier on {len(texts)} sampled messages...")
+        self._embedder = SentenceTransformer(self.embedding_model_name)
+        embeddings = self._embedder.encode(texts, show_progress_bar=False)
+
+        n_components = min(self.pca_components, len(texts) - 1, embeddings.shape[1])
+        self._pca = PCA(n_components=n_components, random_state=self.random_state)
+        reduced = self._pca.fit_transform(embeddings)
+
+        self._label_encoder = LabelEncoder()
+        y = self._label_encoder.fit_transform(labels)
+
+        self._rf = RandomForestClassifier(n_estimators=150, max_depth=10, random_state=self.random_state)
+        self._rf.fit(reduced, y)
+        print(f"✅ Mental-health risk classifier trained: {len(texts)} messages, {len(self._label_encoder.classes_)} labels.")
+
+    def classify_mental_health_risk(self, text: str, risk_threshold: float = 0.3) -> dict:
+        """
+        Classify text against the trained label set and flag a risk signal from
+        the predicted probability of risk-labeled classes (see
+        MENTAL_HEALTH_RISK_LABELS).
+
+        Args:
+            text: The message text to screen.
+            risk_threshold: Minimum predicted probability on a risk label before
+                treating the text as a risk signal (checked independently of
+                whether that label is the single most likely one).
+
+        Returns:
+            dict with keys is_risk (bool), label (str, top predicted label),
+            score (float, top label's probability), and scores (dict of all
+            labels to their predicted probabilities), or None if the text is
+            empty or the classifier has no trained model (e.g. dataset missing).
+        """
+        if not text or not text.strip():
+            return None
+        self._ensure_trained()
+        if self._rf is None:
+            return None
+
+        try:
+            embedding = self._embedder.encode([text])
+            reduced = self._pca.transform(embedding)
+            proba = self._rf.predict_proba(reduced)[0]
+        except Exception as e:
+            print(f"⚠️ Mental-health risk classification failed: {e}")
+            return None
+
+        label_probs = dict(zip(self._label_encoder.classes_, (float(p) for p in proba)))
+        top_label = max(label_probs, key=label_probs.get)
+        risk_score = max((label_probs.get(label, 0.0) for label in MENTAL_HEALTH_RISK_LABELS), default=0.0)
+
+        return {
+            "is_risk": risk_score >= risk_threshold,
+            "label": top_label,
+            "score": label_probs[top_label],
+            "scores": label_probs,
+        }

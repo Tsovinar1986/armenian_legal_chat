@@ -19,10 +19,11 @@ Pillow>=10.0
 
 # --- Case classifier (src/services/classifier.py) ---
 beautifulsoup4>=4.12
-# Zero-shot mental-health risk screening (classify_mental_health_risk); loaded lazily
-# on first use, downloads the mDeBERTa-v3-base-mnli-xnli model (~280MB) on first run.
-transformers>=4.40
-torch>=2.2
+# MentalHealthRiskClassifier (second, heavier crisis-screening signal alongside
+# the keyword check) uses SentenceTransformer + PCA + RandomForestClassifier —
+# same technique as notebook/Modeling.ipynb's Random Forest experiment. Trained
+# lazily on first use from sentence-transformers/scikit-learn below; no separate
+# line needed here since both are already required by the notebooks section.
 
 # --- Case export to Word (src/services/case_export.py) ---
 python-docx>=1.1
@@ -71,6 +72,8 @@ seaborn>=0.13
 nltk>=3.8
 
 # --- Notebooks: modeling (Modeling.ipynb, Modeling1.ipynb) ---
+# sentence-transformers and scikit-learn are also used at runtime by
+# src/services/classifier.py's MentalHealthRiskClassifier (not just notebooks).
 sentence-transformers>=2.6
 scikit-learn>=1.4
 xgboost>=2.0
