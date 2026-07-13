@@ -268,47 +268,28 @@ class LegalAgent:
             if not context:
                 return "Համապատասխան տեղական իրավական նախադեպեր չգտնվեցին։ Խնդրում ենք համոզվել, որ ֆայլերը ճիշտ են ներբեռնված համակարգ։"
 
-            # If LLM is available, use it to generate a proper response
+            # If LLM is available, use a researcher+writer crew to generate a proper response
             if self.llm:
                 try:
-                    print(f"📝 Generating response using model: {self.model_name}")
-                    # Create a prompt that instructs the model to answer based on the context
+                    print(f"📝 Generating response via legal crew using model: {self.model_name}")
                     conversation_context = self._format_history_for_prompt(history)
 
-                    system_prompt = """Դուք մասնագետ իրավաբան ես, որը փակ համակարգում գործում ես:
-Հաճախորդի հարցին պատասխանիր հետևյալ համատեքստի և իրական դատական գործերի հիման վրա, հաշվի առնելով նաև զրույցի նախորդ ընթացքը:
-Պատասխան տուր կոնկրետ, կառուցված, հասկանալի և հղում կատարիր նմանատիպ դատական գործերի:
-
-ԶՐՈՒՅՑԻ ՆԱԽՈՐԴ ԸՆԹԱՑՔԸ:
-{conversation_context}
-
-ՀԱՄԱՏԵՔՍՏ ԱՎԵԼԱՑՅԱԼ ՏԵՂԵԿԱՏՎՈՒԹՅՈՒՆ:
-{context}
-
-ԻՐԱԿԱՆ ԴԱՏԱԿԱՆ ԳՈՐԾԵՐԻ ՕՐԻՆԱԿՆԵՐ:
-{cases_context}
-
-ՀԱՃԱԽՈՐԴԻ ՆՈՐ ՀԱՐՑ: {query}
-
-ՊԱՏԱՍԽԱՆ (հայերեն, մասնագետական և հասկանալի):"""
-
-                    prompt = system_prompt.format(
-                        conversation_context=conversation_context,
+                    from src.agents.legal_crew import run_legal_crew
+                    print("⏳ Waiting for crew response...")
+                    response = run_legal_crew(
+                        query=query,
                         context=context,
                         cases_context=cases_context,
-                        query=query,
+                        conversation_context=conversation_context,
+                        model_name=self.model_name,
                     )
-                    
-                    # Call the LLM to generate response
-                    print(f"⏳ Waiting for model response...")
-                    response = self.llm.invoke(prompt)
-                    print(f"✅ Model response received ({len(response)} characters)")
+                    print(f"✅ Crew response received ({len(response)} characters)")
                     similar_cases_block = self._build_similar_cases_block(search_query)
                     return response + similar_cases_block if similar_cases_block else response
                 except Exception as llm_error:
-                    print(f"❌ LLM generation error: {llm_error}")
+                    print(f"❌ Legal crew generation error: {llm_error}")
                     print(f"   Model: {self.model_name}")
-                    # Fall back to template response if LLM fails
+                    # Fall back to template response if the crew fails
                     return (
                         "Նույնական պատմական դատական գործ չի գտնվել։ "
                         "Տրամադրվում է սինթեզված իրավաբանական խորհրդատվություն՝ "

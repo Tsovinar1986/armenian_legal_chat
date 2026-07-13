@@ -4,6 +4,8 @@ Project documentation is maintained in [DOCUMENTATION.md](DOCUMENTATION.md).
 
 This repository is an Armenian-language legal assistance prototype that combines retrieval-augmented generation (RAG) over court-style text, live webcam interpretation of simple body-language cues, and voice input and output in Eastern Armenian. It is intended for experimentation and research workflows around Armenian legal text, not as a substitute for a licensed attorney.
 
+All rights reserved — see [LICENSE](LICENSE). This is not open-source software.
+
 ## Remaining work
 - Add object detection support for action and scene understanding.
 - Therapist-matching (mirroring the lawyer top-lawyer/similar-cases ranking, using `get_top_lawyer_for_query`-style logic) is not built — `MentalHealthQAClassifier` currently does supportive Q&A retrieval only, not matching to a specific human therapist.
@@ -12,6 +14,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 - `chat_sessions` and `therapist_chat_sessions` in `main.py` are still in-memory only and reset on server restart; only users/bookings/payments are persisted in SQLite.
 - Booking a therapist session currently only wires through to payment (`/pay?consultation_type=therapist`); it doesn't yet also create a calendar `booking` record automatically.
 - Availability (`/api/bookings/availability`) uses a fixed default business-hours window (09:00–18:00) for every provider — there's no per-provider schedule/working-hours configuration yet, and no concept of days off/holidays.
+- The legal/therapist crews (`src/agents/legal_crew.py`, `src/agents/therapist_crew.py`) run two sequential LLM calls (researcher then writer) instead of one, so RAG-fallback and therapist-chat responses are slower than before; if `crewai` isn't installed or a call fails, both paths fall back to their pre-crew behavior (a template message / direct QA retrieval) rather than erroring.
 
 ## Completed vision updates
 - Shared classifier module implemented in `src/services/vision_classifier.py` for action and emotion inference.
@@ -30,13 +33,16 @@ This repository is an Armenian-language legal assistance prototype that combines
 
 | Path | Role |
 |------|------|
-| `src/main.py` | Entry point: Ollama + Chroma, vision, voice, hotkeys |
+| `src/main.py` | Desktop CLI entry point: Ollama + Chroma, vision, voice, hotkeys (see the file-header comment for how this differs from `main.py`) |
 | `src/services/` | `vision.py`, `voice.py`, `ingestion.py`, `classifier.py` (case matching + zero-shot mental-health risk + `MentalHealthQAClassifier`), `crisis_detection.py` (keyword crisis check) |
-| `src/agents/legal_agent.py` | Ollama LLM prompts in Armenian + RAG context, multi-turn conversation memory |
-| `src/db/repository.py` | Chroma access and PHP-style case list parsing |
+| `src/agents/legal_agent.py` | Orchestrates the legal RAG pipeline: classifier match → vector search → `legal_crew.py`, multi-turn conversation memory |
+| `src/agents/legal_crew.py` | CrewAI researcher+writer crew that drafts the Armenian RAG-fallback answer |
+| `src/agents/therapist_crew.py` | CrewAI researcher+writer crew that drafts the therapist supportive-chat reply |
+| `src/db/repository.py` | Thin repo wrapper around the vector store (`CompanyLegalRepo`) |
+| `src/db/vector_store.py` | `ChromaVectorStore` — talks to `chromadb` directly (not `langchain-chroma`; see "Vector search & CrewAI" below) |
 | `src/db/portal_store.py` | SQLite persistence for the web portal (users, bookings, password resets, payments); hashed passwords |
 | `src/data/` | Case lists, CSVs, exports (large files may be gitignored) |
-| `main.py` | FastAPI web portal: auth, bookings, WebRTC signaling, and the `/api/chat` Legal AI chat API |
+| `main.py` | FastAPI web portal: auth, bookings/availability, payments, WebRTC signaling, `/api/chat` and `/api/therapist-chat` (see the file-header comment for how this differs from `src/main.py`) |
 | `notebook/` | EDA, labeling, and modeling experiments |
 
 ## Prerequisites
@@ -59,6 +65,23 @@ pip install -r requirements.txt
 ```
 
 All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry.
+
+**Second, separate command required for multi-agent chat responses:**
+
+```bash
+pip install --no-deps crewai==1.15.2
+```
+
+See "Vector search & multi-agent orchestration (CrewAI)" below for why this has to be a second, `--no-deps` command rather than a normal `requirements.txt` line — running a plain `pip install crewai` in this venv will silently downgrade `chromadb` and break the vector database. If this step is skipped, `/api/chat` and `/api/therapist-chat` still work — they just fall back to a template/direct-retrieval response instead of a crew-drafted one.
+
+### Vector search & multi-agent orchestration (CrewAI)
+
+Legal RAG-fallback answers (`main.py`'s `/api/chat`, and `src/main.py`'s CLI) and therapist supportive-chat answers (`/api/therapist-chat`) are drafted by a two-agent CrewAI crew — a **Researcher** agent that organizes already-retrieved context (case precedents / a similar past Q&A pair), and a **Writer** agent that drafts the final response from what the Researcher produced. See `src/agents/legal_crew.py` and `src/agents/therapist_crew.py`.
+
+Two implementation details worth knowing if you touch this code:
+
+- **The researcher agents are never given a callable tool.** The local Ollama model in use (`armenia-lawyer-router`) does not support tool/function calling — giving a crewai `Agent` any `tools=[...]` against this model fails with `Error code: 400 ... does not support tools`. Retrieval therefore stays exactly where it already was (plain Python, before the crew runs) and is handed to the researcher as task input instead.
+- **`crewai` is intentionally not a normal line in `requirements.txt`.** It hard-pins `chromadb~=1.1.0` (true across every version from 1.0.0 to 1.15.2, the newest at time of writing). That's a problem for two reasons: (1) it conflicts with the `chromadb>=1.5.9` this project actually needs, and (2) chromadb's on-disk format isn't backward compatible — `chromadb<1.2` can't even open a `./chroma_legal_data` directory written by `chromadb>=1.5` (it crashes with a Rust panic on open, not a clean error). Vector search was moved off `langchain-chroma` onto a small direct-`chromadb` wrapper (`src/db/vector_store.py`, `ChromaVectorStore`) specifically to remove that pin conflict from the *chromadb version itself*; `crewai` is still installed separately with `--no-deps` so pip never tries to resolve its chromadb requirement at all. crewai's `Agent`/`Task`/`Crew`/`LLM` classes work fine this way — only crewai's own optional memory/knowledge features need its pinned chromadb version, and this project doesn't use them.
 
 The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database. Both the CLI (`src/main.py`) and the web chat (`main.py`) keep real multi-turn conversation history: follow-up questions are folded into the search query, and the RAG fallback path passes the conversation into the LLM prompt, so context carries across turns instead of treating every message as a fresh, unrelated question.
 

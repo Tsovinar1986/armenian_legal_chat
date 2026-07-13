@@ -102,7 +102,19 @@ class TherapistChatTests(unittest.TestCase):
         self.assertIn("911", data["response"])
         mock_get_qa.assert_not_called()
 
-    def test_non_crisis_message_uses_qa_classifier(self):
+    def test_non_crisis_message_uses_therapist_crew(self):
+        mock_qa = MagicMock()
+        with patch.object(main, "get_mental_health_qa_classifier", return_value=mock_qa), \
+             patch.object(main, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
+             patch("src.agents.therapist_crew.run_therapist_crew", return_value="A warm supportive reply.") as mock_crew:
+            res = self.client.post("/api/therapist-chat", json={"message": "I feel stressed about my exams"})
+        data = res.json()
+        self.assertTrue(data["success"])
+        self.assertIn("A warm supportive reply.", data["response"])
+        self.assertIn("not advice from a licensed therapist", data["response"])
+        mock_crew.assert_called_once()
+
+    def test_crew_failure_falls_back_to_direct_retrieval(self):
         mock_qa = MagicMock()
         mock_qa.find_similar_answer.return_value = {
             "question": "I feel stressed about exams",
@@ -111,7 +123,8 @@ class TherapistChatTests(unittest.TestCase):
             "similarity_score": 0.8,
         }
         with patch.object(main, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(main, "get_legal_agent", side_effect=RuntimeError("no ollama")):
+             patch.object(main, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
+             patch("src.agents.therapist_crew.run_therapist_crew", side_effect=RuntimeError("crew failed")):
             res = self.client.post("/api/therapist-chat", json={"message": "I feel stressed about my exams"})
         data = res.json()
         self.assertTrue(data["success"])

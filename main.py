@@ -1,3 +1,12 @@
+# main.py (repo root) — the FastAPI WEB PORTAL: browser chat UI, REST API
+# (auth, bookings, payments, /api/chat, /api/therapist-chat), WebRTC signaling.
+# Run with: uvicorn main:app --reload
+#
+# This is a different entry point from src/main.py, which is the DESKTOP CLI
+# app (webcam + microphone loop, keyboard-driven). They share the same
+# underlying LegalAgent/classifier/vector-store code in src/, but are two
+# separate ways to run this project — not two versions of the same file.
+# Run the CLI with: python src/main.py
 import json
 import os
 import uuid
@@ -30,6 +39,11 @@ STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 stripe.api_key = STRIPE_SECRET_KEY
 
 CONSULTATION_TYPES = {"lawyer", "therapist"}
+
+# Local Ollama model used by the therapist researcher+writer crew (src/agents/
+# therapist_crew.py) — same model the legal side uses, since there isn't a
+# separate specialized model for supportive conversation.
+THERAPIST_CREW_MODEL = "armenia-lawyer-router"
 
 room_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
 # Chat history is per-session and in-memory for v1 (resets on restart); it is fed back
@@ -67,16 +81,16 @@ def get_legal_agent():
 
     try:
         from langchain_ollama import OllamaEmbeddings
-        from langchain_chroma import Chroma
         import chromadb
         from src.core.state import SystemState
         from src.services.classifier import LegalCaseClassifier
         from src.agents.legal_agent import LegalAgent
         from src.db.repository import CompanyLegalRepo
+        from src.db.vector_store import ChromaVectorStore
 
         embeddings = OllamaEmbeddings(model="nomic-embed-text")
         client = chromadb.PersistentClient(path="./chroma_legal_data")
-        vector_db = Chroma(collection_name="company_legal_cases", embedding_function=embeddings, client=client)
+        vector_db = ChromaVectorStore(client=client, collection_name="company_legal_cases", embeddings=embeddings)
         classifier_service = LegalCaseClassifier(data_folder="src/data")
         _legal_agent = LegalAgent(CompanyLegalRepo(vector_db), SystemState(), classifier=classifier_service)
         return _legal_agent
@@ -1059,19 +1073,31 @@ async def therapist_chat(request: ChatMessageRequest):
 
     if response_text is None:
         qa_classifier = get_mental_health_qa_classifier()
-        match = await run_in_threadpool(qa_classifier.find_similar_answer, user_message)
-        if match:
-            label_note = f" (topic: {match['label']})" if match.get("label") else ""
-            response_text = (
-                f"{match['answer']}\n\n"
-                f"—\nThis is a supportive response from similar past conversations{label_note}, "
-                f"not advice from a licensed therapist. For an actual consultation, visit /therapist."
+        try:
+            from src.agents.therapist_crew import run_therapist_crew
+            crew_response = await run_in_threadpool(
+                run_therapist_crew, user_message, qa_classifier, THERAPIST_CREW_MODEL
             )
-        else:
             response_text = (
-                "I don't have a good match for that in similar past conversations. "
-                "For a real conversation with a licensed therapist, visit /therapist."
+                f"{crew_response}\n\n"
+                f"—\nThis is a supportive-conversation demo, not advice from a licensed "
+                f"therapist. For an actual consultation, visit /therapist."
             )
+        except Exception as exc:
+            print(f"⚠️ Therapist crew unavailable, falling back to direct retrieval: {exc}")
+            match = await run_in_threadpool(qa_classifier.find_similar_answer, user_message)
+            if match:
+                label_note = f" (topic: {match['label']})" if match.get("label") else ""
+                response_text = (
+                    f"{match['answer']}\n\n"
+                    f"—\nThis is a supportive response from similar past conversations{label_note}, "
+                    f"not advice from a licensed therapist. For an actual consultation, visit /therapist."
+                )
+            else:
+                response_text = (
+                    "I don't have a good match for that in similar past conversations. "
+                    "For a real conversation with a licensed therapist, visit /therapist."
+                )
 
     therapist_chat_sessions[session_id].append({"role": "bot", "text": response_text, "at": datetime.utcnow().isoformat()})
     return {"success": True, "session_id": session_id, "response": response_text}

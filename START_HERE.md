@@ -10,6 +10,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Then, as a **separate, required-for-crew-responses** command:
+
+```bash
+pip install --no-deps crewai==1.15.2
+```
+
+This has to be `--no-deps` and separate from `requirements.txt` — `crewai` hard-pins a `chromadb` version that cannot even open this project's existing `./chroma_legal_data` directory (see README.md "Vector search & multi-agent orchestration (CrewAI)" for the full explanation). Never run a plain `pip install crewai` in this venv. If you skip this step entirely, the app still runs — `/api/chat` and `/api/therapist-chat` just fall back to a simpler, non-crew response instead of erroring.
+
 ## 2. Run the web portal
 
 Optional — set these before starting the server if you want payments to work (card/Apple Pay/Google Pay for lawyer and therapist consultations). Without them, everything else still runs; `/api/payments/create-intent` just returns a clear "not configured" error.
@@ -189,3 +197,5 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - Therapist-matching to a specific human therapist (mirroring the lawyer top-lawyer ranking) is not built — `/api/therapist-chat` is supportive Q&A retrieval only.
 - The `/api/chat` endpoint requires Ollama running locally with the `nomic-embed-text` and `armenia-lawyer-router` models pulled — see `OLLAMA setup.md`.
 - The zero-shot mental-health risk model (`transformers` + `torch`, ~280MB) downloads on first use, the first time any message reaches the crisis-check step — expect a one-time delay on the very first chat message after starting the server.
+- Both chat endpoints now draft answers via a two-agent CrewAI crew (Researcher, then Writer — see README.md), which means two sequential LLM calls instead of one, so responses are slower than before. If `crewai` isn't installed (step 1's second command) or a crew call fails, both endpoints fall back to their previous behavior instead of erroring.
+- This project is proprietary (see `LICENSE`) — not open-source, no license is granted for reuse without permission.

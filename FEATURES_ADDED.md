@@ -138,6 +138,23 @@ Mirrors the lawyer-side chat/booking features for a therapist/mental-health trac
 
 ---
 
+### 10. **Multi-Agent (CrewAI) Chat Responses**
+Legal RAG-fallback answers and therapist supportive-chat answers are now drafted by a two-agent CrewAI crew (Researcher, then Writer) instead of a single direct LLM call, and vector search moved off `langchain-chroma` to make this possible without breaking the existing database.
+
+**Features:**
+- `src/agents/legal_crew.py` (`run_legal_crew`) and `src/agents/therapist_crew.py` (`run_therapist_crew`): each builds a sequential `Crew` of a Researcher agent (organizes already-retrieved context) and a Writer agent (drafts the final response), using `crewai.LLM(model="ollama/<model>")` against the existing local model
+- Wired in: `LegalAgent._generate_rag_response()` calls `run_legal_crew()`; `main.py`'s `/api/therapist-chat` calls `run_therapist_crew()`. Both fall back to their pre-crew behavior on any exception (missing `crewai`, a failed call, etc.)
+- **No tools given to the researcher agents** — `armenia-lawyer-router` (the local Ollama model) returns a 400 error if a crewai `Agent` is given `tools=[...]`, since it doesn't support tool/function calling. Retrieval stays in plain Python before the crew runs.
+- `src/db/vector_store.py` (`ChromaVectorStore`, `Document`): a small direct-`chromadb` wrapper replacing `langchain_chroma.Chroma`, implementing just the interface this project uses (`similarity_search`, `similarity_search_with_score`, `add_texts`) — needed because `crewai` hard-pins `chromadb~=1.1.0`, which conflicts with `langchain-chroma`'s `chromadb>=1.3.5`
+- `crewai` is intentionally **not** a normal `requirements.txt` line — its chromadb pin is not just a version-metadata conflict but a real data-format incompatibility (`chromadb<1.2` cannot open a `./chroma_legal_data` directory written by `chromadb>=1.5` — confirmed Rust-panic crash, not a clean error). Install it separately: `pip install --no-deps crewai==1.15.2`, documented in README.md/requirements.txt
+- Added `LICENSE` — all-rights-reserved/proprietary, not MIT, since this codebase may be sold or exclusively licensed
+- Added file-header comments to `main.py` and `src/main.py` clarifying they're separate entry points (web portal vs. desktop CLI), not two versions of the same file
+
+**How to use:**
+No action needed for existing callers — `/api/chat`, `/api/therapist-chat`, and the CLI (`t`/`m`) all use the crews automatically once `crewai` is installed (see README.md's two-step install). Without it, both paths still work via their previous fallback behavior.
+
+---
+
 ## File Structure
 
 ### New Files Created:
@@ -156,6 +173,17 @@ Mirrors the lawyer-side chat/booking features for a therapist/mental-health trac
    - `create_user()`, `find_user()`, `authenticate_user()`, `update_password()`
    - `set_password_reset_otp()`, `get_password_reset()`, `clear_password_reset()`
    - `create_booking()`, `list_bookings()`, `recent_bookings()`, `count_users()`, `count_bookings()`, `distinct_roles()`
+
+4. **`src/agents/legal_crew.py`** - CrewAI researcher+writer crew for legal RAG-fallback answers
+   - `run_legal_crew(query, context, cases_context, conversation_context, model_name)` - builds and kicks off the crew
+
+5. **`src/agents/therapist_crew.py`** - CrewAI researcher+writer crew for therapist supportive-chat answers
+   - `run_therapist_crew(message, qa_classifier, model_name)` - builds and kicks off the crew
+
+6. **`src/db/vector_store.py`** - `ChromaVectorStore` + `Document`
+   - Direct-`chromadb` replacement for `langchain_chroma.Chroma`; implements `similarity_search`, `similarity_search_with_score`, `add_texts`
+
+7. **`LICENSE`** - All-rights-reserved/proprietary notice (not MIT)
 
 ### Modified Files:
 1. **`src/services/classifier.py`** - Enhanced LegalCaseClassifier
@@ -177,6 +205,7 @@ Mirrors the lawyer-side chat/booking features for a therapist/mental-health trac
    - `format_similar_cases_response(cases)` - Format similar cases for display
    - `format_approved_cases_response(result)` - Format approved cases for display
    - `get_advice(user_query, history=None)` - Classifier-match and RAG-fallback responses now include the top lawyer, an inline similar-cases block, and real multi-turn memory via `history`; also runs the Step 0/0b crisis and mental-health risk checks before any of the above
+   - `_generate_rag_response()` - now delegates final answer drafting to `run_legal_crew()` (see `src/agents/legal_crew.py`) instead of a single direct `self.llm.invoke(prompt)` call, falling back to the old template response if the crew fails
    - `_build_search_query()`, `_format_history_for_prompt()` - Fold conversation history into search queries and the LLM prompt
    - `_build_similar_cases_block()` - Render similar cases with lawyer name + approved marker inline
 
@@ -187,9 +216,11 @@ Mirrors the lawyer-side chat/booking features for a therapist/mental-health trac
    - Fixed `LegalCaseClassifier(data_folder=...)` to point at `src/data` instead of an empty auto-created `data/` folder
 
 4. **`main.py`** - FastAPI portal
-   - `get_legal_agent()` - Lazily initializes the shared `LegalAgent` (Chroma + classifier + Ollama LLM) for the web process
+   - `get_legal_agent()` - Lazily initializes the shared `LegalAgent` (`ChromaVectorStore` + classifier + Ollama LLM) for the web process
    - `POST /api/chat`, `GET /api/chat/{session_id}` - Browser/partner-integration chat API with per-session history
+   - `POST /api/therapist-chat` - now delegates to `run_therapist_crew()` (see `src/agents/therapist_crew.py`) instead of directly formatting the QA classifier's result, falling back to direct retrieval if the crew fails
    - Auth, booking, and dashboard endpoints now read/write through `src/db/portal_store.py` instead of in-memory lists
+   - Added file-header comment clarifying this is the FastAPI web portal, a different entry point from `src/main.py` (the desktop CLI)
 
 5. **`src/services/vision.py`** - LegalVisionService
    - `classifier` is now a lazy property instead of an eager `__init__` attribute, deferring the `VisionClassifier` (PyTorch + YOLOv8 + MediaPipe) import and construction until first real use

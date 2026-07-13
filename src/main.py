@@ -1,3 +1,11 @@
+# src/main.py — the DESKTOP CLI app: webcam + microphone loop, keyboard-driven
+# (m/t/u/q controls). Run with: python src/main.py
+#
+# This is a different entry point from main.py at the repo root, which is the
+# FastAPI WEB PORTAL (browser chat, REST API, WebRTC). They share the same
+# underlying LegalAgent/classifier/vector-store code in src/, but are two
+# separate ways to run this project — not two versions of the same file.
+# Run the web portal with: uvicorn main:app --reload
 import sys
 import os
 import time
@@ -28,8 +36,8 @@ except ImportError as e:
 
 try:
     from langchain_ollama import OllamaEmbeddings
-    from langchain_chroma import Chroma
     import chromadb
+    from src.db.vector_store import ChromaVectorStore
 except ImportError as e:
     print(f"❌ Critical import failed: {e}")
     print("Please install required packages with: pip install -r requirements.txt")
@@ -135,7 +143,7 @@ def main():
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     client = chromadb.PersistentClient(path="./chroma_legal_data")
-    vector_db = Chroma(collection_name="company_legal_cases", embedding_function=embeddings, client=client)
+    vector_db = ChromaVectorStore(client=client, collection_name="company_legal_cases", embeddings=embeddings)
     
     voice_service = VoiceService(state)
     vision_service = LegalVisionService(state)
