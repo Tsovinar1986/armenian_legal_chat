@@ -121,7 +121,10 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - GET /api/dashboard
 - GET /api/bookings
 - POST /api/bookings
-  - Body: title, client_name, lawyer_name (holds the provider's name — lawyer or therapist), start_time, role, `provider_type` (optional, `"lawyer"` or `"therapist"`, defaults to `"lawyer"`)
+  - Body: title, client_name, lawyer_name (holds the provider's name — lawyer or therapist), start_time, role, `provider_type` (optional, `"lawyer"` or `"therapist"`, defaults to `"lawyer"`), `timezone` (optional IANA name e.g. `"Asia/Yerevan"`, defaults to `"UTC"` — used to interpret `start_time` if it has no UTC offset)
+- GET /api/bookings/availability
+  - Query params: `provider_name`, `date` (`YYYY-MM-DD`, interpreted in `timezone`), `timezone` (default `"UTC"`), `slot_minutes` (default 60), `start_hour`/`end_hour` (default 9/18 — fixed business hours, not yet per-provider)
+  - Response: `success`, `slots: [{local_start, local_end, utc_start, utc_end, is_free}, ...]` — every slot is shown in both the requested timezone and UTC
 
 ### Legal AI chat
 
@@ -165,6 +168,7 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - Forgot password: http://localhost:8000/api/auth/forgot-password
 - Reset password: http://localhost:8000/api/auth/reset-password
 - Bookings: http://localhost:8000/api/bookings
+- Booking availability: http://localhost:8000/api/bookings/availability
 - Dashboard: http://localhost:8000/api/dashboard
 - Legal AI chat: http://localhost:8000/api/chat
 - Chat history: http://localhost:8000/api/chat/{session_id}

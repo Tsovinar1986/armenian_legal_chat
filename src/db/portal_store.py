@@ -6,7 +6,9 @@ import hashlib
 import os
 import secrets
 import sqlite3
+from datetime import datetime, timezone as dt_timezone
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
@@ -51,6 +53,16 @@ def init_db() -> None:
         existing_columns = {row["name"] for row in conn.execute("PRAGMA table_info(bookings)").fetchall()}
         if "provider_type" not in existing_columns:
             conn.execute("ALTER TABLE bookings ADD COLUMN provider_type TEXT NOT NULL DEFAULT 'lawyer'")
+        # Migration: timezone the client booked in, plus start_time_utc — a
+        # normalized UTC instant computed from start_time + timezone, used to
+        # reliably compare bookings across timezones for availability lookups.
+        # start_time itself is left as whatever the client sent (unchanged, for
+        # API-contract backward compatibility); start_time_utc is best-effort and
+        # may be NULL for old rows that predate this migration.
+        if "timezone" not in existing_columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'")
+        if "start_time_utc" not in existing_columns:
+            conn.execute("ALTER TABLE bookings ADD COLUMN start_time_utc TEXT")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS password_resets (
                 identifier TEXT PRIMARY KEY,
@@ -193,6 +205,28 @@ def update_password(identifier: str, new_password: str) -> bool:
         conn.close()
 
 
+def start_time_to_utc_iso(start_time: str, tz_name: str) -> Optional[str]:
+    """Convert a booking's start_time to a normalized UTC ISO8601 string.
+
+    If start_time already carries an offset/Z, that offset is trusted as-is and
+    just converted to UTC. If it's naive (e.g. from an HTML datetime-local
+    input, which has no timezone), it's interpreted as local time in tz_name
+    before converting. Returns None if start_time or tz_name can't be parsed —
+    callers should treat that booking as unknown/unschedulable for availability
+    purposes rather than failing the whole request.
+    """
+    try:
+        dt = datetime.fromisoformat(start_time)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        try:
+            dt = dt.replace(tzinfo=ZoneInfo(tz_name))
+        except Exception:
+            dt = dt.replace(tzinfo=dt_timezone.utc)
+    return dt.astimezone(dt_timezone.utc).isoformat()
+
+
 def create_booking(
     title: str,
     client_name: str,
@@ -200,13 +234,15 @@ def create_booking(
     start_time: str,
     role: str,
     provider_type: str = "lawyer",
+    timezone: str = "UTC",
 ) -> Dict:
+    start_time_utc = start_time_to_utc_iso(start_time, timezone)
     conn = _connect()
     try:
         cursor = conn.execute(
-            "INSERT INTO bookings (title, client_name, lawyer_name, start_time, role, provider_type) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (title, client_name, lawyer_name, start_time, role, provider_type),
+            "INSERT INTO bookings (title, client_name, lawyer_name, start_time, role, provider_type, "
+            "timezone, start_time_utc) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (title, client_name, lawyer_name, start_time, role, provider_type, timezone, start_time_utc),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM bookings WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -220,6 +256,23 @@ def list_bookings() -> List[Dict]:
     try:
         rows = conn.execute("SELECT * FROM bookings ORDER BY id ASC").fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def get_provider_busy_ranges(provider_name: str, start_utc_iso: str, end_utc_iso: str) -> List[str]:
+    """Return start_time_utc values for a provider's bookings whose UTC instant
+    falls within [start_utc_iso, end_utc_iso). Used to compute free/busy slots
+    for GET /api/bookings/availability. Bookings with no start_time_utc (couldn't
+    be parsed, or predate the timezone migration) are excluded — best-effort."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT start_time_utc FROM bookings WHERE lawyer_name = ? AND start_time_utc IS NOT NULL "
+            "AND start_time_utc >= ? AND start_time_utc < ?",
+            (provider_name, start_utc_iso, end_utc_iso),
+        ).fetchall()
+        return [r["start_time_utc"] for r in rows]
     finally:
         conn.close()
 

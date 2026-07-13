@@ -11,6 +11,7 @@ This repository is an Armenian-language legal assistance prototype that combines
 - `/mood-tracking` and `/therapist` are backend-ready placeholder pages (same status as the auth/booking demo UI) — a B2B partner's real frontend still needs to be built against the underlying APIs.
 - `chat_sessions` and `therapist_chat_sessions` in `main.py` are still in-memory only and reset on server restart; only users/bookings/payments are persisted in SQLite.
 - Booking a therapist session currently only wires through to payment (`/pay?consultation_type=therapist`); it doesn't yet also create a calendar `booking` record automatically.
+- Availability (`/api/bookings/availability`) uses a fixed default business-hours window (09:00–18:00) for every provider — there's no per-provider schedule/working-hours configuration yet, and no concept of days off/holidays.
 
 ## Completed vision updates
 - Shared classifier module implemented in `src/services/vision_classifier.py` for action and emotion inference.
@@ -94,6 +95,14 @@ Apple Pay additionally requires verifying your domain in the Stripe Dashboard �
 ### Therapist role and bookings
 
 Registration/login already accept `role: "therapist"` alongside `"individual"`/`"lawyer"` (the field was never restricted to just two values). `POST /api/bookings` now also accepts an optional `provider_type` (`"lawyer"` or `"therapist"`, defaults to `"lawyer"` for backward compatibility with existing callers) so the same booking flow covers both consultation types; `lawyer_name` continues to hold whichever provider's name applies. `/mood-tracking` is a web fallback landing page for mood tracking when not on the mobile app, linking to `/therapist`.
+
+### Booking calendar: free/busy times in local time and UTC
+
+`GET /api/bookings/availability?provider_name=...&date=YYYY-MM-DD&timezone=Area/City` returns a day's slots for a provider, each with both the local time (in the given IANA timezone) and the UTC equivalent, plus `is_free`. Business hours are a fixed default (09:00–18:00 in the given timezone, 60-minute slots by default — override with `slot_minutes`, `start_hour`, `end_hour`) since there's no per-provider schedule configuration yet.
+
+`POST /api/bookings` now also accepts an optional `timezone` (IANA name, defaults to `"UTC"`): if `start_time` has no UTC offset, it's interpreted as local time in that timezone. Internally this is normalized to `start_time_utc` (via `src/db/portal_store.start_time_to_utc_iso`, using the stdlib `zoneinfo` — no new dependency) so availability can reliably compare bookings made in different timezones. `start_time` itself is stored unchanged for backward compatibility with the existing API contract.
+
+The demo page's "Calendar booking" card includes a "Check free times" panel (auto-detects the browser's timezone via `Intl.DateTimeFormat`) — click a free slot to fill in the booking form.
 
 Ultralytics downloads `yolov8n.pt` on first use. NLTK-based notebooks may need `nltk.download("punkt")` once.
 

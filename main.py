@@ -2,8 +2,9 @@ import json
 import os
 import uuid
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, List, Set
+from zoneinfo import ZoneInfo
 
 import stripe
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -124,9 +125,10 @@ class BookingRequest(BaseModel):
     title: str
     client_name: str
     lawyer_name: str
-    start_time: str
+    start_time: str  # ISO8601; if it has no offset/Z it's interpreted as local time in `timezone`
     role: str
     provider_type: str = "lawyer"  # "lawyer" or "therapist" — who client_name is booking with
+    timezone: str = "UTC"  # IANA name (e.g. "Asia/Yerevan") the client picked start_time in
 
 
 class ChatMessageRequest(BaseModel):
@@ -242,7 +244,23 @@ async def index():
         <div class="grid">
           <div class="card">
             <h3>Calendar booking</h3>
-            <form id="bookingForm">
+            <p class="small">Business hours default to 09:00–18:00 in the timezone below (no per-provider schedule yet). Check free times first, then click a free slot to fill the booking time — shown in both that local timezone and UTC.</p>
+            <div class="chat-input-row" style="align-items:flex-end;">
+              <div style="flex:1;">
+                <label class="small">Provider name</label>
+                <input id="availabilityProvider" placeholder="Lawyer or therapist name" />
+              </div>
+              <div style="flex:1;">
+                <label class="small">Date</label>
+                <input id="availabilityDate" type="date" />
+              </div>
+            </div>
+            <label class="small">Timezone (IANA name)</label>
+            <input id="bookingTimezone" placeholder="e.g. Asia/Yerevan" />
+            <button id="checkAvailabilityBtn" type="button" class="secondary">Check free times</button>
+            <div id="availabilitySlots" class="small" style="margin-top:8px; max-height:160px; overflow-y:auto;"></div>
+
+            <form id="bookingForm" style="margin-top:14px;">
               <input id="bookingTitle" placeholder="Consultation topic" required />
               <input id="bookingClient" placeholder="Client name" required />
               <select id="bookingProviderType">
@@ -282,6 +300,46 @@ async def index():
       <script>
         const authMessage = document.getElementById('authMessage');
         const bookingMessage = document.getElementById('bookingMessage');
+        const bookingTimezoneInput = document.getElementById('bookingTimezone');
+        const availabilitySlots = document.getElementById('availabilitySlots');
+        bookingTimezoneInput.value = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+        document.getElementById('availabilityDate').value = new Date().toISOString().slice(0, 10);
+
+        document.getElementById('checkAvailabilityBtn').addEventListener('click', async () => {
+          const provider_name = document.getElementById('availabilityProvider').value.trim();
+          const date = document.getElementById('availabilityDate').value;
+          const tz = bookingTimezoneInput.value.trim() || 'UTC';
+          if (!provider_name || !date) {
+            availabilitySlots.textContent = 'Enter a provider name and date first.';
+            return;
+          }
+          availabilitySlots.textContent = 'Loading...';
+          const params = new URLSearchParams({ provider_name, date, timezone: tz });
+          const res = await fetch(`/api/bookings/availability?${params}`);
+          const data = await res.json();
+          if (!data.success) {
+            availabilitySlots.textContent = data.message;
+            return;
+          }
+          availabilitySlots.innerHTML = '';
+          data.slots.forEach(slot => {
+            const row = document.createElement('div');
+            const localTime = slot.local_start.slice(11, 16);
+            const utcTime = slot.utc_start.slice(11, 16);
+            row.textContent = `${slot.is_free ? '🟢' : '🔴'} ${localTime} ${tz} (${utcTime} UTC)`;
+            if (slot.is_free) {
+              row.style.cursor = 'pointer';
+              row.style.textDecoration = 'underline';
+              row.addEventListener('click', () => {
+                document.getElementById('bookingLawyer').value = provider_name;
+                document.getElementById('bookingTime').value = slot.local_start.slice(0, 16);
+              });
+            } else {
+              row.style.opacity = '0.5';
+            }
+            availabilitySlots.appendChild(row);
+          });
+        });
         const dashboardStats = document.getElementById('dashboardStats');
         const recentBookings = document.getElementById('recentBookings');
         const roomIdInput = document.getElementById('roomId');
@@ -425,7 +483,8 @@ async def index():
             lawyer_name: document.getElementById('bookingLawyer').value,
             start_time: document.getElementById('bookingTime').value,
             role: document.getElementById('bookingRole').value,
-            provider_type: document.getElementById('bookingProviderType').value
+            provider_type: document.getElementById('bookingProviderType').value,
+            timezone: bookingTimezoneInput.value.trim() || 'UTC'
           };
           const res = await fetch('/api/bookings', {
             method: 'POST',
@@ -862,8 +921,82 @@ async def create_booking(request: BookingRequest):
         start_time=request.start_time,
         role=request.role,
         provider_type=request.provider_type,
+        timezone=request.timezone,
     )
     return {"success": True, "message": "Appointment booked successfully", "booking": booking}
+
+
+@app.get("/api/bookings/availability")
+async def get_availability(
+    provider_name: str,
+    date: str,
+    timezone: str = "UTC",
+    slot_minutes: int = 60,
+    start_hour: int = 9,
+    end_hour: int = 18,
+):
+    """Free/busy slots for a provider on one local calendar date, in both that
+    timezone and UTC. Business hours are a fixed default window (09:00-18:00 in
+    `timezone`) since there's no per-provider schedule configuration yet — every
+    provider is treated as available the same hours every day."""
+    try:
+        tz = ZoneInfo(timezone)
+    except Exception:
+        return {"success": False, "message": f"Unknown timezone: {timezone}"}
+    try:
+        day = datetime.strptime(date, "%Y-%m-%d").date()
+    except ValueError:
+        return {"success": False, "message": "date must be in YYYY-MM-DD format"}
+    if not (0 <= start_hour < end_hour <= 24):
+        return {"success": False, "message": "start_hour must be less than end_hour, both within 0-24"}
+    if slot_minutes <= 0:
+        return {"success": False, "message": "slot_minutes must be positive"}
+
+    day_start_local = datetime(day.year, day.month, day.day, start_hour, 0, tzinfo=tz)
+    day_end_local = datetime(day.year, day.month, day.day, end_hour, 0, tzinfo=tz)
+
+    # Widen the DB query window so bookings whose *local* date differs from `date`
+    # (because timezone offsets can shift a UTC instant across a calendar day)
+    # are still caught if their instant actually falls inside the local window.
+    query_start_utc = (day_start_local - timedelta(hours=14)).astimezone(dt_timezone.utc).isoformat()
+    query_end_utc = (day_end_local + timedelta(hours=14)).astimezone(dt_timezone.utc).isoformat()
+    busy_starts_utc = await run_in_threadpool(
+        portal_store.get_provider_busy_ranges, provider_name, query_start_utc, query_end_utc
+    )
+    busy_instants = []
+    for iso in busy_starts_utc:
+        try:
+            busy_instants.append(datetime.fromisoformat(iso))
+        except ValueError:
+            continue
+
+    slots = []
+    cursor_local = day_start_local
+    slot_delta = timedelta(minutes=slot_minutes)
+    while cursor_local + slot_delta <= day_end_local:
+        slot_end_local = cursor_local + slot_delta
+        slot_start_utc = cursor_local.astimezone(dt_timezone.utc)
+        slot_end_utc = slot_end_local.astimezone(dt_timezone.utc)
+
+        is_free = not any(slot_start_utc <= busy < slot_end_utc for busy in busy_instants)
+
+        slots.append({
+            "local_start": cursor_local.isoformat(),
+            "local_end": slot_end_local.isoformat(),
+            "utc_start": slot_start_utc.isoformat(),
+            "utc_end": slot_end_utc.isoformat(),
+            "is_free": is_free,
+        })
+        cursor_local = slot_end_local
+
+    return {
+        "success": True,
+        "provider_name": provider_name,
+        "date": date,
+        "timezone": timezone,
+        "slot_minutes": slot_minutes,
+        "slots": slots,
+    }
 
 
 @app.post("/api/chat")

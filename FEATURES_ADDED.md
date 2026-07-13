@@ -123,6 +123,21 @@ Mirrors the lawyer-side chat/booking features for a therapist/mental-health trac
 
 ---
 
+### 9. **Booking Calendar: Free/Busy Times in Local Time and UTC**
+`GET /api/bookings/availability` computes free/busy slots for a provider on a given calendar date, shown in both a chosen timezone and UTC — no separate timezone-conversion work needed by the caller.
+
+**Features:**
+- `bookings.timezone` and `bookings.start_time_utc` columns (idempotent migration; `start_time` itself is unchanged for backward compatibility) — `portal_store.start_time_to_utc_iso()` normalizes any booking to a UTC instant using the stdlib `zoneinfo` (no new dependency), trusting an explicit offset if present or interpreting a naive value as local time in the booking's `timezone`
+- `POST /api/bookings` accepts an optional `timezone` (IANA name, default `"UTC"`)
+- `GET /api/bookings/availability?provider_name=...&date=YYYY-MM-DD&timezone=Area/City` returns fixed business-hours (09:00–18:00 by default, configurable via `slot_minutes`/`start_hour`/`end_hour`) slots, each with `local_start`/`local_end`/`utc_start`/`utc_end`/`is_free` — busy slots come from existing bookings for that provider, correctly compared across timezones (a booking's local calendar date can differ from its UTC date near midnight; the query window is widened to still catch it)
+- Demo page's "Calendar booking" card gained a "Check free times" panel that auto-detects the browser's timezone and lets you click a free slot to fill the booking form
+
+**How to use:**
+1. `GET /api/bookings/availability?provider_name=Bob+Lawyer&date=2026-08-03&timezone=Asia/Yerevan`
+2. Or on `/`, enter a provider name + date, click "Check free times", then click a green (free) slot
+
+---
+
 ## File Structure
 
 ### New Files Created:
@@ -183,7 +198,7 @@ Mirrors the lawyer-side chat/booking features for a therapist/mental-health trac
 6. **`src/core/state.py`** - SystemState
    - `mental_health_concern`, `mental_health_suggestion` fields + `update_mental_health_concern()`, `get_mental_health_concern()`, `get_mental_health_suggestion()`
 
-7. **`src/db/portal_store.py`** - Added `payments` table + `create_payment()`, `update_payment_status()`, `get_payment()`, `get_payment_by_intent()`; added `provider_type` column to `bookings` via an idempotent migration in `init_db()`
+7. **`src/db/portal_store.py`** - Added `payments` table + `create_payment()`, `update_payment_status()`, `get_payment()`, `get_payment_by_intent()`; added `provider_type` column to `bookings` via an idempotent migration in `init_db()`; added `timezone`/`start_time_utc` columns, `start_time_to_utc_iso()`, and `get_provider_busy_ranges()` for booking-calendar availability
 
 ---
 
