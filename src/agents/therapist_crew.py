@@ -25,15 +25,26 @@ Requires crewai to be installed (see requirements.txt for the two-step install
 """
 from crewai import Agent, Crew, LLM, Process, Task
 
+# Display names for the Writer agent's language instruction. Any code not
+# listed here is passed through as-is — the local Ollama model's actual
+# fluency beyond Armenian/English is unverified, so this is best-effort.
+LANGUAGE_NAMES = {
+    "hy": "Armenian",
+    "en": "English",
+}
 
-def run_therapist_crew(message: str, qa_classifier, model_name: str) -> str:
+
+def run_therapist_crew(message: str, qa_classifier, model_name: str, language: str = "en") -> str:
     """Run the therapist researcher+writer crew and return the final response text.
 
     :param message: the user's current message
     :param qa_classifier: a MentalHealthQAClassifier instance (or anything with
         a compatible find_similar_answer(text) method)
     :param model_name: the local Ollama model name (e.g. "armenia-lawyer-router")
+    :param language: short language code for the drafted response (default "en"
+        since the underlying counseling dataset is English-language)
     """
+    language_name = LANGUAGE_NAMES.get(language, language)
     match = qa_classifier.find_similar_answer(message)
     if match:
         found_example = (
@@ -60,13 +71,13 @@ def run_therapist_crew(message: str, qa_classifier, model_name: str) -> str:
     writer = Agent(
         role="Supportive Conversation Writer",
         goal=(
-            "Write a warm, brief, non-clinical supportive response, grounded in the "
-            "researcher's findings, that always makes clear this is not a licensed therapist."
+            f"Write a warm, brief, non-clinical supportive response in {language_name}, grounded "
+            "in the researcher's findings, that always makes clear this is not a licensed therapist."
         ),
         backstory=(
-            "A compassionate peer-support writer who never diagnoses, never claims to be a "
-            "licensed therapist, and always gently points toward booking a real session for "
-            "anything beyond a supportive conversation."
+            f"A compassionate peer-support writer who writes in {language_name}, never diagnoses, "
+            "never claims to be a licensed therapist, and always gently points toward booking a "
+            "real session for anything beyond a supportive conversation."
         ),
         llm=llm,
         verbose=False,
@@ -88,11 +99,11 @@ def run_therapist_crew(message: str, qa_classifier, model_name: str) -> str:
         description=(
             f"The person just said: {message}\n\n"
             "Using the researcher's findings as inspiration (not a script to copy verbatim), "
-            "write a short, warm, supportive response. Do not diagnose. Do not claim to be a "
-            "licensed therapist. End by gently mentioning that /therapist can be used to book a "
-            "real session for anything beyond this conversation."
+            f"write a short, warm, supportive response in {language_name}. Do not diagnose. Do "
+            "not claim to be a licensed therapist. End by gently mentioning that /therapist can "
+            "be used to book a real session for anything beyond this conversation."
         ),
-        expected_output="A short, warm, supportive response that is clearly not a diagnosis or licensed-therapist advice.",
+        expected_output=f"A short, warm, supportive response in {language_name} that is clearly not a diagnosis or licensed-therapist advice.",
         agent=writer,
         context=[research_task],
     )

@@ -51,3 +51,37 @@ CRISIS_RESPONSE_HY = (
     "Այս համակարգը իրավաբանական խորհրդատվության գործիք է և ՉԻ կարող փոխարինել "
     "շտապ բժշկական կամ հոգեբանական օգնությանը։"
 )
+
+CRISIS_RESPONSE_EN = (
+    "⚠️ Your message contains language that may indicate a serious emotional crisis "
+    "or risk of self-harm.\n\n"
+    "If you are in immediate danger or thinking about suicide, please reach out right away:\n"
+    "🚨 Armenia unified emergency line: 911\n"
+    "👮 Police: 102   🚑 Ambulance: 103\n\n"
+    "If you are outside Armenia, please contact your local emergency number instead.\n\n"
+    "Please also reach out immediately to someone you trust (a family member or friend), "
+    "or a qualified psychologist/therapist.\n\n"
+    "This system is a legal-advice tool and CANNOT substitute for emergency medical or "
+    "psychological help."
+)
+
+# Keyed by IANA-ish short language code. Only hy/en are actually translated —
+# add more entries here as real translations become available. Any other
+# requested code falls back to English in get_crisis_response below, since
+# that reaches more people than defaulting to Armenian-only.
+CRISIS_RESPONSES = {
+    "hy": CRISIS_RESPONSE_HY,
+    "en": CRISIS_RESPONSE_EN,
+}
+
+DEFAULT_CRISIS_LANGUAGE = "hy"
+
+
+def get_crisis_response(language: str = DEFAULT_CRISIS_LANGUAGE) -> str:
+    """Return the crisis response text for the given language code.
+
+    Falls back to English for any code without a real translation (see
+    CRISIS_RESPONSES) — a generic English safety message is more useful to an
+    unsupported-language user than an Armenian-only one they may not read.
+    """
+    return CRISIS_RESPONSES.get(language, CRISIS_RESPONSE_EN)

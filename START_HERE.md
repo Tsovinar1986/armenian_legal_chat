@@ -137,7 +137,7 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 ### Legal AI chat
 
 - POST /api/chat
-  - Body: `message` (Armenian question text), `session_id` (optional — omit on the first message, then reuse the `session_id` returned in the response for every follow-up so the assistant keeps conversational context)
+  - Body: `message` (Armenian question text), `session_id` (optional — omit on the first message, then reuse the `session_id` returned in the response for every follow-up so the assistant keeps conversational context), `language` (optional short code e.g. `"hy"`/`"en"`, defaults to `"hy"` — see README.md "Language support")
   - Response: `success`, `session_id`, `response` (the assistant's answer, including the recommended lawyer and the lawyer with the strongest approved-case record for similar cases)
   - Before any legal-advice logic runs, every message is screened for self-harm/suicide risk language (keyword check + zero-shot classification — see README.md "Crisis/safety and mental-health risk screening"). If flagged, `response` is a fixed message with real emergency contact numbers instead of a legal answer.
 - GET /api/chat/{session_id}
@@ -147,7 +147,7 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 ### Therapist chat (supportive Q&A, not legal advice, not a licensed therapist)
 
 - POST /api/therapist-chat
-  - Body: `message`, `session_id` (optional, same pattern as /api/chat)
+  - Body: `message`, `session_id` (optional, same pattern as /api/chat), `language` (optional, defaults to `"en"`)
   - Response: `success`, `session_id`, `response` — a retrieved answer from `MentalHealthQAClassifier` (trained on `src/data/student_mh_counseling_100k_with_label_column.csv`), always screened for crisis signals first, same as /api/chat
 - GET /api/therapist-chat/{session_id}
   - Returns the full message history for that session

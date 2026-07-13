@@ -25,6 +25,15 @@ Requires crewai to be installed (see requirements.txt for the two-step install
 """
 from crewai import Agent, Crew, LLM, Process, Task
 
+# Display names for the Writer agent's language instruction. Any code not
+# listed here is passed through as-is (e.g. "fr") — the local Ollama model's
+# actual fluency in languages beyond Armenian/English is unverified, so this
+# is a best-effort instruction, not a guarantee of quality.
+LANGUAGE_NAMES = {
+    "hy": "Armenian",
+    "en": "English",
+}
+
 
 def run_legal_crew(
     query: str,
@@ -32,6 +41,7 @@ def run_legal_crew(
     cases_context: str,
     conversation_context: str,
     model_name: str,
+    language: str = "hy",
 ) -> str:
     """Run the legal researcher+writer crew and return the final answer text.
 
@@ -41,7 +51,10 @@ def run_legal_crew(
     :param cases_context: precomputed real-court-case example text
     :param conversation_context: formatted recent conversation history
     :param model_name: the local Ollama model name (e.g. "armenia-lawyer-router")
+    :param language: short language code for the drafted answer (default "hy"
+        for backward compatibility with existing Armenian-only callers)
     """
+    language_name = LANGUAGE_NAMES.get(language, language)
     llm = LLM(model=f"ollama/{model_name}")
 
     researcher = Agent(
@@ -63,13 +76,13 @@ def run_legal_crew(
     writer = Agent(
         role="Legal Advisor",
         goal=(
-            "Write a clear, professional Armenian-language answer to the client's legal "
+            f"Write a clear, professional answer in {language_name} to the client's legal "
             "question, grounded only in the researcher's findings and the conversation so far."
         ),
         backstory=(
-            "A senior Armenian legal advisor who explains legal matters to clients in plain, "
-            "precise Armenian, referencing relevant precedents without inventing facts not "
-            "found in the research."
+            f"A senior legal advisor who explains Armenian legal matters to clients in plain, "
+            f"precise {language_name}, referencing relevant precedents without inventing facts "
+            "not found in the research."
         ),
         llm=llm,
         verbose=False,
@@ -91,14 +104,14 @@ def run_legal_crew(
 
     writing_task = Task(
         description=(
-            f"ԶՐՈՒՅՑԻ ՆԱԽՈՐԴ ԸՆԹԱՑՔԸ:\n{conversation_context}\n\n"
-            f"ՀԱՃԱԽՈՐԴԻ ՆՈՐ ՀԱՐՑ: {query}\n\n"
-            "Using the researcher's findings as your only factual grounding, write the final "
-            "answer in Armenian: concrete, structured, understandable, and referencing similar "
-            "court cases where relevant. Do not invent case numbers or facts not present in the "
-            "research."
+            f"Conversation so far:\n{conversation_context}\n\n"
+            f"Client's new question: {query}\n\n"
+            f"Using the researcher's findings as your only factual grounding, write the final "
+            f"answer in {language_name}: concrete, structured, understandable, and referencing "
+            "similar court cases where relevant. Do not invent case numbers or facts not present "
+            "in the research."
         ),
-        expected_output="A complete, professional answer in Armenian to the client's question.",
+        expected_output=f"A complete, professional answer in {language_name} to the client's question.",
         agent=writer,
         context=[research_task],
     )

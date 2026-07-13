@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from src.db import portal_store
-from src.services.crisis_detection import CRISIS_RESPONSE_HY, detect_crisis_signal
+from src.services.crisis_detection import detect_crisis_signal, get_crisis_response
 
 app = FastAPI(title="Armenian Legal Portal", version="1.0.0")
 
@@ -148,6 +148,7 @@ class BookingRequest(BaseModel):
 class ChatMessageRequest(BaseModel):
     message: str
     session_id: str | None = None
+    language: str | None = None  # short code ("hy", "en", ...); each endpoint applies its own default when omitted
 
 
 class PaymentIntentRequest(BaseModel):
@@ -1026,7 +1027,9 @@ async def chat(request: ChatMessageRequest):
 
     try:
         agent = get_legal_agent()
-        response_text = await run_in_threadpool(agent.get_advice, user_message, history)
+        response_text = await run_in_threadpool(
+            agent.get_advice, user_message, history, language=request.language or "hy"
+        )
     except Exception as exc:
         response_text = (
             "⚠️ Legal AI backend is unavailable right now "
@@ -1046,28 +1049,29 @@ async def get_chat_history(session_id: str):
 async def therapist_chat(request: ChatMessageRequest):
     """Supportive-conversation chat backed by MentalHealthQAClassifier, separate
     from the legal /api/chat. Always screens for crisis signals first (keyword,
-    then zero-shot if the legal agent's classifier happens to be available) and
-    returns CRISIS_RESPONSE_HY before ever touching the Q&A retrieval — the
-    dataset itself contains "suicidal thoughts"-labeled rows, so a retrieved
-    answer must never be allowed to substitute for the real crisis response."""
+    then the Random Forest risk classifier if the legal agent happens to be
+    available) and returns the crisis response before ever touching the Q&A
+    retrieval — the dataset itself contains "suicidal thoughts"-labeled rows,
+    so a retrieved answer must never be allowed to substitute for it."""
     session_id = request.session_id or str(uuid.uuid4())
     user_message = request.message.strip()
     if not user_message:
         return {"success": False, "message": "Please type a message.", "session_id": session_id}
+    language = request.language or "en"
 
     now = datetime.utcnow().isoformat()
     therapist_chat_sessions[session_id].append({"role": "user", "text": user_message, "at": now})
 
     response_text = None
     if detect_crisis_signal(user_message):
-        response_text = CRISIS_RESPONSE_HY
+        response_text = get_crisis_response(language)
     else:
         try:
             agent = get_legal_agent()
             if agent.risk_classifier:
                 risk = await run_in_threadpool(agent.risk_classifier.classify_mental_health_risk, user_message)
                 if risk and risk["is_risk"]:
-                    response_text = CRISIS_RESPONSE_HY
+                    response_text = get_crisis_response(language)
         except Exception:
             pass  # Legal agent/Ollama being unavailable shouldn't block therapist chat.
 
@@ -1076,7 +1080,7 @@ async def therapist_chat(request: ChatMessageRequest):
         try:
             from src.agents.therapist_crew import run_therapist_crew
             crew_response = await run_in_threadpool(
-                run_therapist_crew, user_message, qa_classifier, THERAPIST_CREW_MODEL
+                run_therapist_crew, user_message, qa_classifier, THERAPIST_CREW_MODEL, language
             )
             response_text = (
                 f"{crew_response}\n\n"

@@ -94,6 +94,15 @@ Every call to `LegalAgent.get_advice()` (CLI and `/api/chat`) is screened for se
 
 If either signal fires, `get_advice()` returns `CRISIS_RESPONSE_HY` immediately — real emergency numbers and a recommendation to contact a trusted person or a licensed therapist — without touching the classifier, vector DB, or LLM. This is a heuristic safety net, not a clinical assessment, and must never be presented as one.
 
+### Language support (Armenian, English, others)
+
+`POST /api/chat` and `POST /api/therapist-chat` accept an optional `language` field (short code, e.g. `"hy"`, `"en"`) in the request body:
+
+- The crisis response (see above) is translated via `get_crisis_response(language)` in `src/services/crisis_detection.py` — currently `hy` and `en` have real translations (`CRISIS_RESPONSE_HY`, `CRISIS_RESPONSE_EN`); any other code falls back to English rather than defaulting to Armenian-only, since more people are likely to read English than Armenian.
+- The LLM-drafted answer (legal RAG-fallback via `run_legal_crew`, therapist chat via `run_therapist_crew`) is instructed to respond in the requested language — codes without a display-name mapping (`LANGUAGE_NAMES` in `src/agents/legal_crew.py` / `therapist_crew.py`) are passed through as-is to the LLM; actual fluency beyond Armenian/English from the local `armenia-lawyer-router` model is unverified.
+- `/api/chat` defaults to `"hy"` (unchanged behavior for existing callers); `/api/therapist-chat` defaults to `"en"` (the counseling dataset is English).
+- The classifier-match and vector-match template responses in `LegalAgent.get_advice()` (Steps 2-3) are **not** localized — those remain fixed Armenian text regardless of `language`; only the free-text LLM-drafted answer and the crisis response are actually multi-language right now.
+
 ### Webcam mental-health concern nudge
 
 `LegalVisionService` (`src/services/vision.py`) tracks a rolling window of the last 30 per-frame emotions detected by `VisionClassifier.detect_emotion()`. If at least 60% of that window is sad/angry, it draws a soft on-screen suggestion to talk to a therapist and sets `SystemState.get_mental_health_concern()` / `get_mental_health_suggestion()` so other code (e.g. a future web/mobile client) can read the flag. This clears itself once the mood pattern is no longer sustained. It is a coarse heuristic on facial expression, not a diagnosis, and only ever suggests talking to a therapist.

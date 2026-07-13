@@ -5,7 +5,7 @@ import csv
 from langchain_ollama import OllamaLLM
 from src.services.case_export import CaseExportService
 from src.services.classifier import MentalHealthRiskClassifier
-from src.services.crisis_detection import detect_crisis_signal, CRISIS_RESPONSE_HY
+from src.services.crisis_detection import detect_crisis_signal, get_crisis_response, DEFAULT_CRISIS_LANGUAGE
 
 class LegalAgent:
     def __init__(self, repo, state, classifier=None, model=None):
@@ -143,7 +143,7 @@ class LegalAgent:
             )
         return "".join(lines)
 
-    def get_advice(self, user_query: str, history: list = None) -> str:
+    def get_advice(self, user_query: str, history: list = None, language: str = DEFAULT_CRISIS_LANGUAGE) -> str:
         """
         Processes the legal query by routing it through the classifier first,
         then a strict vector match, and falling back to a structured RAG pipeline.
@@ -151,6 +151,12 @@ class LegalAgent:
         :param history: optional list of {"role": "user"|"bot", "text": str} prior turns
             in this conversation, used to resolve follow-up questions and give the LLM
             fallback path real conversational context.
+        :param language: short language code ("hy", "en", ...) for the crisis
+            response and the LLM-drafted RAG-fallback answer (see
+            src/agents/legal_crew.py). The classifier-match/vector-match
+            templates below (Steps 2-3) are fixed Armenian text regardless of
+            this value — only the free-text LLM-drafted answer and the crisis
+            response are actually localized right now.
         """
         history = history or []
 
@@ -158,7 +164,7 @@ class LegalAgent:
         # including the short-query clarification check, since a crisis message can
         # be very short ("ուզում եմ մեռնել"). See src/services/crisis_detection.py.
         if detect_crisis_signal(user_query):
-            return CRISIS_RESPONSE_HY
+            return get_crisis_response(language)
 
         # Step 0b: Random Forest mental-health risk screen — a second, heavier
         # signal that catches phrasings the fixed keyword list in Step 0 misses.
@@ -170,7 +176,7 @@ class LegalAgent:
         if self.risk_classifier:
             risk = self.risk_classifier.classify_mental_health_risk(user_query)
             if risk and risk["is_risk"]:
-                return CRISIS_RESPONSE_HY
+                return get_crisis_response(language)
 
         # Step 1: Interactive check / Clarification hook
         if len(user_query.split()) < 3:
@@ -244,9 +250,9 @@ class LegalAgent:
             print(f"⚠️ Վեկտորային բազայի ստուգման սխալ: {e}")
 
         # Step 4: Fallback to general RAG synthesis
-        return self._generate_rag_response(user_query, history=history, search_query=search_query)
+        return self._generate_rag_response(user_query, history=history, search_query=search_query, language=language)
 
-    def _generate_rag_response(self, query: str, history: list = None, search_query: str = None) -> str:
+    def _generate_rag_response(self, query: str, history: list = None, search_query: str = None, language: str = DEFAULT_CRISIS_LANGUAGE) -> str:
         search_query = search_query or query
         try:
             print(f"🔍 Starting RAG response generation for query: {query[:50]}...")
@@ -288,6 +294,7 @@ class LegalAgent:
                         cases_context=cases_context,
                         conversation_context=conversation_context,
                         model_name=self.model_name,
+                        language=language,
                     )
                     print(f"✅ Crew response received ({len(response)} characters)")
                     similar_cases_block = self._build_similar_cases_block(search_query)
