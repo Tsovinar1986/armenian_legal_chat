@@ -143,19 +143,7 @@ ollama rm armenia-lawyer-router
 
 ---
 
-## 9. Comparison variant: `Modelfile.qwen`
-
-`Modelfile.qwen` builds a second custom model, **`armenia-legal-qwen`**, using the exact same `SYSTEM` prompt and `PARAMETER` settings as this `Modelfile`, but starting `FROM qwen3` (Ollama's general-purpose Qwen3 model) instead of the fine-tuned GGUF weights. It exists so `src/main_qwen.py` can compare answer quality against `armenia-lawyer-router` with the prompt held constant — only the base model differs.
-
-```bash
-ollama pull qwen3
-ollama create armenia-legal-qwen -f Modelfile.qwen
-ollama run armenia-legal-qwen   # or: python src/main_qwen.py
-```
-
-Qwen3 is open-weight (Apache 2.0) and runs locally through Ollama at no cost, the same as the model above — see README.md "Qwen vs. armenia-lawyer-router" for the full comparison notes.
-
-## 10. Sharing This Project With Others
+## 9. Sharing This Project With Others
 
 To let someone else run this model, share:
 1. The `Modelfile`

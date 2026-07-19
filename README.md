@@ -175,24 +175,6 @@ Vector data is stored under `./chroma_legal_data` by default.
 
 The vision stack (PyTorch + YOLOv8 + MediaPipe Pose/FaceMesh, `src/services/vision_classifier.py`) is loaded lazily on first actual use — a webcam frame or an uploaded video (`u`) — not at startup. If you answer `n` to the webcam prompt and never upload a video, that whole stack (and its memory footprint, ~270MB+) is never loaded, which matters on memory-constrained machines (e.g. 8GB RAM).
 
-### Qwen vs. armenia-lawyer-router
-
-`src/main_qwen.py` is an A/B comparison variant of `src/main.py` — identical in every way except it constructs `LegalAgent` with `model="armenia-legal-qwen"` instead of the default `armenia-lawyer-router`. `armenia-legal-qwen` is a custom Ollama model built from `Modelfile.qwen`, which applies the *exact same* system prompt/behavior as `armenia-lawyer-router`'s `Modelfile` (see `OLLAMA setup.md`) on top of Qwen3 instead of the fine-tuned GGUF weights — so the comparison isolates the base model, not the prompt.
-
-```bash
-ollama pull qwen3                              # one-time base model download
-ollama create armenia-legal-qwen -f Modelfile.qwen   # build the custom model, same as armenia-lawyer-router's build step
-python src/main_qwen.py
-```
-
-**Which one is actually better?** Not something this codebase can answer for you — it depends on how the two models perform on real Armenian legal questions, which needs a native/fluent Armenian legal reader judging actual output side by side. What can be said with confidence:
-
-- `armenia-lawyer-router` is a model fine-tuned specifically for this project's Armenian legal domain — it's reasonable to expect it stays more on-topic and in the expected style by default, since that's what it was tuned for.
-- Qwen3 is a general-purpose, multilingual open-weight model from Alibaba — likely broader general knowledge, but its depth in Armenian specifically (as opposed to its stronger languages) is unverified here.
-- Run both on the same handful of real questions and compare the actual output — that's the only reliable way to decide.
-
-**Is Qwen payable?** Not the way this project uses it. Qwen3's weights are open (Apache 2.0) and run locally through Ollama, exactly like `armenia-lawyer-router` and `nomic-embed-text` already do — no API key, no per-token charge, no usage cost beyond your own machine's compute/electricity. You would only pay for Qwen if you instead called a *hosted* Qwen API (e.g. Alibaba Cloud's DashScope, or a third-party inference provider) rather than running it locally via Ollama — this project does the latter.
-
 ## Run the web portal (chat API, auth, bookings, video calls)
 
 ```bash
