@@ -305,11 +305,18 @@ async def index():
               <button id="startCallBtn">Start call</button>
               <button id="hangUpBtn" class="secondary">End call</button>
             </div>
+            <div>
+              <button id="muteAudioBtn" class="secondary">🎤 Mute my audio</button>
+              <button id="muteVideoBtn" class="secondary">📷 Mute my video</button>
+            </div>
             <div class="video-grid">
               <video id="localVideo" autoplay muted playsinline></video>
               <video id="remoteVideo" autoplay playsinline></video>
             </div>
             <div id="callStatus" class="small">Ready to connect.</div>
+            <div id="mutedNotice" class="small" style="display:none; margin-top:8px; padding:10px; background:#3a2410; border:1px solid #8a5a1f; border-radius:8px;">
+              ⚠️ The other participant appears to be muted. Ask them to unmute, or continue in the chat above instead.
+            </div>
           </div>
         </div>
       </div>
@@ -531,11 +538,29 @@ async def index():
           return localStream;
         }
 
+        // Practical fallback for a muted participant: no attempt at guessing
+        // speech from lip movement (unreliable, and there's no viable
+        // Armenian lipreading model to draw from) — just surface a clear
+        // prompt so the call can move to chat/unmuting instead.
+        // Note: browser support for firing track.onmute when the *sender*
+        // sets track.enabled=false varies — this is best-effort, not a
+        // guaranteed signal in every browser.
+        const mutedNotice = document.getElementById('mutedNotice');
+        const remoteTrackMuted = { audio: false, video: false };
+        function updateMutedNotice() {
+          mutedNotice.style.display = (remoteTrackMuted.audio || remoteTrackMuted.video) ? 'block' : 'none';
+        }
+
         function createPeer() {
           if (peerConnection) return peerConnection;
           peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
           peerConnection.ontrack = (event) => {
             remoteVideo.srcObject = event.streams[0];
+            const track = event.track;
+            remoteTrackMuted[track.kind] = track.muted;
+            track.onmute = () => { remoteTrackMuted[track.kind] = true; updateMutedNotice(); };
+            track.onunmute = () => { remoteTrackMuted[track.kind] = false; updateMutedNotice(); };
+            updateMutedNotice();
           };
           peerConnection.onicecandidate = (event) => {
             if (event.candidate && ws) {
@@ -611,6 +636,21 @@ async def index():
           if (peerConnection) peerConnection.close();
           peerConnection = null;
           callStatus.textContent = 'Call ended';
+        });
+
+        const muteAudioBtn = document.getElementById('muteAudioBtn');
+        const muteVideoBtn = document.getElementById('muteVideoBtn');
+        muteAudioBtn.addEventListener('click', () => {
+          if (!localStream) return;
+          localStream.getAudioTracks().forEach(track => { track.enabled = !track.enabled; });
+          const enabled = localStream.getAudioTracks()[0]?.enabled ?? true;
+          muteAudioBtn.textContent = enabled ? '🎤 Mute my audio' : '🔇 Unmute my audio';
+        });
+        muteVideoBtn.addEventListener('click', () => {
+          if (!localStream) return;
+          localStream.getVideoTracks().forEach(track => { track.enabled = !track.enabled; });
+          const enabled = localStream.getVideoTracks()[0]?.enabled ?? true;
+          muteVideoBtn.textContent = enabled ? '📷 Mute my video' : '🚫 Unmute my video';
         });
 
         refreshDashboard();

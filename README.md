@@ -16,6 +16,10 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of the codebase and request flo
 - **Output**: PII in a generated response is blocked and a redacted version is used instead; indecent language in output is blocked; for the legal domain only, cited case numbers are checked against the retrieved context they were supposed to come from (`rag_guardrails.py`) — a cheap hallucinated-citation signal, not a full accuracy guarantee.
 - Word/pattern lists live in plain text files (`crisis_terms.txt`, `indecent_terms.txt`, `prompt_injection_patterns.txt`) for easy editing without touching Python.
 
+### Muted video calls
+
+The demo video-call widget (`/`) detects when the other participant's audio/video track is muted (via `RTCRtpReceiver` track `mute`/`unmute` events) and shows a prompt to unmute or switch to the chat widget instead. Deliberately does **not** attempt to guess speech from lip movement while muted — there's no viable Armenian lipreading model or dataset to draw from, and even English lipreading research is unreliable enough (40%+ word-error-rate in ideal lab conditions) that presenting a guess as understood speech would be actively misleading in a legal/mental-health context. Local mute toggles (`🎤`/`📷` buttons) are provided to test this.
+
 ### Containers
 
 `Dockerfile` + `docker-compose.yml` run `api.py` alongside an Ollama service (kept separate — Ollama is its own large model runtime, not bundled into the app image). `python src/main.py` (the desktop CLI) isn't containerized, since it needs a local webcam/microphone. See `docker-compose.yml`'s comments for first-run model pulls.
