@@ -173,10 +173,11 @@ The vision stack (PyTorch + YOLOv8 + MediaPipe Pose/FaceMesh, `src/services/visi
 
 ### Qwen vs. armenia-lawyer-router
 
-`src/main_qwen.py` is an A/B comparison variant of `src/main.py` — identical in every way except it constructs `LegalAgent` with `model="qwen3"` instead of the default `armenia-lawyer-router`. It exists to let you directly compare answer quality/style between the two models on the same case data and prompts.
+`src/main_qwen.py` is an A/B comparison variant of `src/main.py` — identical in every way except it constructs `LegalAgent` with `model="armenia-legal-qwen"` instead of the default `armenia-lawyer-router`. `armenia-legal-qwen` is a custom Ollama model built from `Modelfile.qwen`, which applies the *exact same* system prompt/behavior as `armenia-lawyer-router`'s `Modelfile` (see `OLLAMA setup.md`) on top of Qwen3 instead of the fine-tuned GGUF weights — so the comparison isolates the base model, not the prompt.
 
 ```bash
-ollama pull qwen3        # one-time, before first run (or a sized tag, e.g. qwen3:8b)
+ollama pull qwen3                              # one-time base model download
+ollama create armenia-legal-qwen -f Modelfile.qwen   # build the custom model, same as armenia-lawyer-router's build step
 python src/main_qwen.py
 ```
 

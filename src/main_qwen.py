@@ -1,21 +1,22 @@
 # src/main_qwen.py — A/B comparison variant of src/main.py, identical except
-# for one line: LegalAgent is constructed with model="qwen3" instead of the
-# default "armenia-lawyer-router". Everything else (vision, voice, RAG
-# pipeline, crisis detection, guardrails) is unchanged — this exists purely to
-# let you compare answer quality/style between the two Ollama models on the
-# same case data and prompts.
+# for one line: LegalAgent is constructed with model="armenia-legal-qwen"
+# instead of the default "armenia-lawyer-router". Everything else (vision,
+# voice, RAG pipeline, crisis detection, guardrails) is unchanged — this
+# exists purely to let you compare answer quality/style between the two
+# Ollama models on the same case data and prompts, with the same system
+# prompt/behavior applied to both (see Modelfile.qwen) for a fair comparison.
 #
-# Before running, pull the model once:
-#   ollama pull qwen3
-# (or a specific size tag, e.g. `ollama pull qwen3:8b` — larger tags are
-# slower but generally higher quality; edit QWEN_MODEL_NAME below to match
-# whichever tag you pulled.)
+# Before running, build the custom model once (from the repo root):
+#   ollama pull qwen3                              # base model download
+#   ollama create armenia-legal-qwen -f Modelfile.qwen
+# See OLLAMA setup.md for the equivalent steps already documented for
+# armenia-lawyer-router — Modelfile.qwen follows the same structure.
 #
 # Run with: python src/main_qwen.py
 #
 # See README.md "Qwen vs. armenia-lawyer-router" for how to interpret the
 # comparison and whether Qwen has any usage cost.
-QWEN_MODEL_NAME = "qwen3"
+QWEN_MODEL_NAME = "armenia-legal-qwen"
 
 import sys
 import os
