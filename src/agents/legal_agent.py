@@ -8,6 +8,68 @@ from src.services.classifier import MentalHealthRiskClassifier
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response, DEFAULT_CRISIS_LANGUAGE
 from src.guardrails import GuardrailManager
 
+# Fixed template strings for the deterministic classifier-match/vector-match
+# responses (Steps 2-3 in get_advice, plus the Step 0c/1 short messages) —
+# these aren't LLM-generated, so they can't "just respond in the requested
+# language" the way the crew-drafted answer does. hy/en have real
+# translations; any other requested code falls back to English, same
+# convention as get_crisis_response in crisis_detection.py.
+_TEMPLATE_TEXT = {
+    "hy": {
+        "guardrail_blocked": "Հարցումը չի կարող մշակվել՝ անհարմար կամ անվավեր բովանդակության պատճառով։ Խնդրում ենք վերաձևակերպել ձեր հարցը։",
+        "clarify_short_query": "Խնդրում եմ, նկարագրեք ձեր իրավական խնդիրը մի փոքր ավելի մանրամասն, որպեսզի կարողանամ ճշգրիտ նախադեպեր գտնել:",
+        "not_specified": "Նշված չէ",
+        "classifier_match_header": "🎯 [CLASSIFIER MATCH FOUND]",
+        "classification_label": "Դասակարգում",
+        "similar_case_label": "Նմանատիպ գործ",
+        "link_label": "Հղում",
+        "recommended_lawyer_label": "Առաջարկվող փաստաբան",
+        "top_lawyer_header": "🏆 Ամենահաջողակ փաստաբանը նմանատիպ գործերում",
+        "approved_cases_label": "Հաստատված գործեր",
+        "of_total_similar": "ընդհանուր {total} նմանատիպ գործից",
+        "case_history_label": "📄 Գործի նախապատմություն / բովանդակության օրինակ",
+        "open_link_footer": "Փոխարենը կարող էք բացել հղումը՝ ամբողջ գործը ընթերցելու համար։",
+        "similar_cases_header": "📚 Նմանատիպ գործեր (օգտակար օրինակներ).",
+        "lawyer_label": "Փաստաբան",
+        "approved_marker": " ✅ Հաստատված",
+        "vector_match_header": "✨ [Համընկնում է գտնվել նախադեպային բազայում]",
+        "vector_match_intro": "Ես համակարգի տվյալների բազայում գտա այս իրավական հարցին համապատասխանող պատմական գործ։",
+        "case_number_label": "🔢 Դատական գործի համարը",
+        "datalex_link_label": "🌐 DataLex հղումը",
+        "case_content_example_label": "📄 Գործի բովանդակության օրինակ",
+        "vector_match_footer": "Մանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։",
+    },
+    "en": {
+        "guardrail_blocked": "This request can't be processed due to inappropriate or invalid content. Please rephrase your question.",
+        "clarify_short_query": "Please describe your legal issue in a bit more detail so I can find accurate precedents.",
+        "not_specified": "Not specified",
+        "classifier_match_header": "🎯 [CLASSIFIER MATCH FOUND]",
+        "classification_label": "Classification",
+        "similar_case_label": "Similar case",
+        "link_label": "Link",
+        "recommended_lawyer_label": "Recommended lawyer",
+        "top_lawyer_header": "🏆 Most successful lawyer in similar cases",
+        "approved_cases_label": "Approved cases",
+        "of_total_similar": "out of {total} similar cases",
+        "case_history_label": "📄 Case history / content excerpt",
+        "open_link_footer": "You can also open the link to read the full case.",
+        "similar_cases_header": "📚 Similar cases (useful examples).",
+        "lawyer_label": "Lawyer",
+        "approved_marker": " ✅ Approved",
+        "vector_match_header": "✨ [Match found in the precedent database]",
+        "vector_match_intro": "I found a historical case in the system's database matching this legal question.",
+        "case_number_label": "🔢 Court case number",
+        "datalex_link_label": "🌐 DataLex link",
+        "case_content_example_label": "📄 Case content excerpt",
+        "vector_match_footer": "Open the link for details, or refine your search.",
+    },
+}
+
+
+def _t(key: str, language: str) -> str:
+    lang_dict = _TEMPLATE_TEXT.get(language) or _TEMPLATE_TEXT["en"]
+    return lang_dict.get(key) or _TEMPLATE_TEXT["en"].get(key, key)
+
 class LegalAgent:
     def __init__(self, repo, state, classifier=None, model=None):
         """
@@ -120,7 +182,7 @@ class LegalAgent:
                 lines.append(f"{speaker}: {text}")
         return "\n".join(lines) if lines else "Սա այս զրույցի առաջին հարցն է։"
 
-    def _build_similar_cases_block(self, search_query: str, exclude_unique_number: str = None, limit: int = 3) -> str:
+    def _build_similar_cases_block(self, search_query: str, exclude_unique_number: str = None, limit: int = 3, language: str = DEFAULT_CRISIS_LANGUAGE) -> str:
         """Render a compact list of similar cases (lawyer name + approved marker) so the
         chat answer surfaces useful precedents inline, without a separate search step."""
         if not self.classifier:
@@ -137,13 +199,13 @@ class LegalAgent:
         if not similar_cases:
             return ""
 
-        lines = ["\n📚 Նմանատիպ գործեր (օգտակար օրինակներ).\n"]
+        lines = [f"\n{_t('similar_cases_header', language)}\n"]
         for idx, case in enumerate(similar_cases, 1):
-            lawyer_name = case.get('lawyer_name') or 'Նշված չէ'
-            approved_mark = " ✅ Հաստատված" if case.get('is_approved') else ""
+            lawyer_name = case.get('lawyer_name') or _t('not_specified', language)
+            approved_mark = _t('approved_marker', language) if case.get('is_approved') else ""
             lines.append(
                 f"   {idx}. {case.get('unique_number', 'N/A')} — {case.get('civil_case_classifier', 'N/A')}\n"
-                f"      Փաստաբան: {lawyer_name}{approved_mark}\n"
+                f"      {_t('lawyer_label', language)}: {lawyer_name}{approved_mark}\n"
             )
         return "".join(lines)
 
@@ -155,12 +217,13 @@ class LegalAgent:
         :param history: optional list of {"role": "user"|"bot", "text": str} prior turns
             in this conversation, used to resolve follow-up questions and give the LLM
             fallback path real conversational context.
-        :param language: short language code ("hy", "en", ...) for the crisis
-            response and the LLM-drafted RAG-fallback answer (see
-            src/agents/legal_crew.py). The classifier-match/vector-match
-            templates below (Steps 2-3) are fixed Armenian text regardless of
-            this value — only the free-text LLM-drafted answer and the crisis
-            response are actually localized right now.
+        :param language: short language code ("hy", "en", ...) for every
+            response path: the crisis response, the LLM-drafted RAG-fallback
+            answer (see src/agents/legal_crew.py), and the deterministic
+            classifier-match/vector-match templates (Steps 2-3, via the
+            module-level _TEMPLATE_TEXT/_t helper). hy/en have real
+            translations for the templates; any other code falls back to
+            English, same convention as get_crisis_response.
         """
         history = history or []
 
@@ -189,14 +252,11 @@ class LegalAgent:
         if self.guardrails:
             guard_result = self.guardrails.check_input(user_query)
             if not guard_result.passed and guard_result.category in ("prompt_injection", "indecent_language"):
-                return (
-                    "Հարցումը չի կարող մշակվել՝ անհարմար կամ անվավեր բովանդակության պատճառով։ "
-                    "Խնդրում ենք վերաձևակերպել ձեր հարցը։"
-                )
+                return _t('guardrail_blocked', language)
 
         # Step 1: Interactive check / Clarification hook
         if len(user_query.split()) < 3:
-            return "Խնդրում եմ, նկարագրեք ձեր իրավական խնդիրը մի փոքր ավելի մանրամասն, որպեսզի կարողանամ ճշգրիտ նախադեպեր գտնել:"
+            return _t('clarify_short_query', language)
 
         search_query = self._build_search_query(user_query, history)
 
@@ -206,32 +266,32 @@ class LegalAgent:
                 matched_case = self.classifier.find_similar_case(search_query)
                 if matched_case:
                     lawyer = matched_case.get('lawyer_name')
-                    lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else "Նշված չէ"
+                    lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else _t('not_specified', language)
                     case_excerpt = self._truncate_text(matched_case.get('judicial_prehistory', ''), max_chars=1200)
 
                     top_lawyer_block = ""
                     top_lawyer = self.classifier.get_top_lawyer_for_query(search_query)
                     if top_lawyer and top_lawyer['approved_cases'] > 0:
                         top_lawyer_block = (
-                            f"\n🏆 Ամենահաջողակ փաստաբանը նմանատիպ գործերում: {top_lawyer['lawyer_name']}\n"
-                            f"   Հաստատված գործեր: {top_lawyer['approved_cases']} "
-                            f"(ընդհանուր {top_lawyer['total_similar_cases']} նմանատիպ գործից)\n"
+                            f"\n{_t('top_lawyer_header', language)}: {top_lawyer['lawyer_name']}\n"
+                            f"   {_t('approved_cases_label', language)}: {top_lawyer['approved_cases']} "
+                            f"({_t('of_total_similar', language).format(total=top_lawyer['total_similar_cases'])})\n"
                         )
 
                     similar_cases_block = self._build_similar_cases_block(
-                        search_query, exclude_unique_number=matched_case.get('unique_number')
+                        search_query, exclude_unique_number=matched_case.get('unique_number'), language=language
                     )
 
                     return (
-                        f"🎯 [CLASSIFIER MATCH FOUND]\n"
-                        f"🔹 Դասակարգում: {matched_case.get('civil_case_classifier')}\n"
-                        f"🔹 Նմանատիպ գործ: {matched_case.get('unique_number')}\n"
-                        f"🔹 Հղում: {matched_case.get('link')}\n"
-                        f"🔹 Առաջարկվող փաստաբան: {lawyer_display}\n"
+                        f"{_t('classifier_match_header', language)}\n"
+                        f"🔹 {_t('classification_label', language)}: {matched_case.get('civil_case_classifier')}\n"
+                        f"🔹 {_t('similar_case_label', language)}: {matched_case.get('unique_number')}\n"
+                        f"🔹 {_t('link_label', language)}: {matched_case.get('link')}\n"
+                        f"🔹 {_t('recommended_lawyer_label', language)}: {lawyer_display}\n"
                         f"{top_lawyer_block}"
                         f"{similar_cases_block}\n"
-                        f"📄 Գործի նախապատմություն / բովանդակության օրինակ:\n{case_excerpt}\n"
-                        f"\nՓոխարենը կարող էք բացել հղումը՝ ամբողջ գործը ընթերցելու համար։"
+                        f"{_t('case_history_label', language)}:\n{case_excerpt}\n"
+                        f"\n{_t('open_link_footer', language)}"
                     )
             except Exception as ex:
                 print(f"⚠️ Error during case classification: {ex}")
@@ -252,15 +312,15 @@ class LegalAgent:
                         datalex_link = f"http://www.datalex.am/?app=AppCaseSearch&caseNumber={encoded_case}"
 
                     if case_number or datalex_link:
-                        response_text = "✨ [Համընկնում է գտնվել նախադեպային բազայում]\n"
-                        response_text += "Ես համակարգի տվյալների բազայում գտա այս իրավական հարցին համապատասխանող պատմական գործ։\n\n"
+                        response_text = f"{_t('vector_match_header', language)}\n"
+                        response_text += f"{_t('vector_match_intro', language)}\n\n"
                         if case_number:
-                            response_text += f"🔢 Դատական գործի համարը: {case_number}\n"
+                            response_text += f"{_t('case_number_label', language)}: {case_number}\n"
                         if datalex_link:
-                            response_text += f"🌐 DataLex հղումը: {datalex_link}\n"
-                        response_text += "\n📄 Գործի բովանդակության օրինակ:\n"
+                            response_text += f"{_t('datalex_link_label', language)}: {datalex_link}\n"
+                        response_text += f"\n{_t('case_content_example_label', language)}:\n"
                         response_text += self._truncate_text(doc.page_content, max_chars=1200)
-                        response_text += "\n\nՄանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։"
+                        response_text += f"\n\n{_t('vector_match_footer', language)}"
                         return response_text
         except Exception as e:
             print(f"⚠️ Վեկտորային բազայի ստուգման սխալ: {e}")
@@ -321,7 +381,7 @@ class LegalAgent:
                             if output_check.redacted_text:
                                 response = output_check.redacted_text
 
-                    similar_cases_block = self._build_similar_cases_block(search_query)
+                    similar_cases_block = self._build_similar_cases_block(search_query, language=language)
                     return response + similar_cases_block if similar_cases_block else response
                 except Exception as llm_error:
                     print(f"❌ Legal crew generation error: {llm_error}")
