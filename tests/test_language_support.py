@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-import main
+import api
 from src.db import portal_store
 from src.services.crisis_detection import (
     CRISIS_RESPONSE_EN,
@@ -29,12 +29,12 @@ class GetCrisisResponseTests(unittest.TestCase):
 class ChatLanguageParamTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        main.chat_sessions.clear()
-        main.therapist_chat_sessions.clear()
-        self.client = TestClient(main.app)
+        api.chat_sessions.clear()
+        api.therapist_chat_sessions.clear()
+        self.client = TestClient(api.app)
 
     def test_legal_chat_crisis_response_respects_language(self):
-        with patch.object(main, "get_legal_agent") as mock_get_agent:
+        with patch.object(api, "get_legal_agent") as mock_get_agent:
             mock_agent = MagicMock()
             mock_agent.get_advice.return_value = CRISIS_RESPONSE_EN
             mock_get_agent.return_value = mock_agent
@@ -46,7 +46,7 @@ class ChatLanguageParamTests(unittest.TestCase):
             self.assertEqual(kwargs["language"], "en")
 
     def test_legal_chat_defaults_to_armenian(self):
-        with patch.object(main, "get_legal_agent") as mock_get_agent:
+        with patch.object(api, "get_legal_agent") as mock_get_agent:
             mock_agent = MagicMock()
             mock_agent.get_advice.return_value = "some answer"
             mock_get_agent.return_value = mock_agent
@@ -68,8 +68,8 @@ class ChatLanguageParamTests(unittest.TestCase):
 
     def test_therapist_chat_passes_language_to_crew(self):
         mock_qa = MagicMock()
-        with patch.object(main, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(main, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
+        with patch.object(api, "get_mental_health_qa_classifier", return_value=mock_qa), \
+             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
              patch("src.agents.therapist_crew.run_therapist_crew", return_value="reply") as mock_crew:
             self.client.post("/api/therapist-chat", json={"message": "I feel stressed", "language": "hy"})
         args, _ = mock_crew.call_args

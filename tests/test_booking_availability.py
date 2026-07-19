@@ -2,7 +2,7 @@ import unittest
 
 from fastapi.testclient import TestClient
 
-import main
+import api
 from src.db import portal_store
 
 
@@ -26,7 +26,7 @@ class StartTimeToUtcTests(unittest.TestCase):
 class BookingAvailabilityEndpointTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        self.client = TestClient(main.app)
+        self.client = TestClient(api.app)
 
     def _book(self, start_time, timezone="UTC", lawyer_name="Bob Lawyer"):
         return self.client.post("/api/bookings", json={

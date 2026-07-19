@@ -1,11 +1,11 @@
 # src/main.py — the DESKTOP CLI app: webcam + microphone loop, keyboard-driven
 # (m/t/u/q controls). Run with: python src/main.py
 #
-# This is a different entry point from main.py at the repo root, which is the
+# This is a different entry point from api.py at the repo root, which is the
 # FastAPI WEB PORTAL (browser chat, REST API, WebRTC). They share the same
 # underlying LegalAgent/classifier/vector-store code in src/, but are two
 # separate ways to run this project — not two versions of the same file.
-# Run the web portal with: uvicorn main:app --reload
+# Run the web portal with: uvicorn api:app --reload
 import sys
 import os
 import time

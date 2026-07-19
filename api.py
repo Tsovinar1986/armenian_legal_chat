@@ -1,6 +1,6 @@
-# main.py (repo root) — the FastAPI WEB PORTAL: browser chat UI, REST API
+# api.py (repo root) — the FastAPI WEB PORTAL: browser chat UI, REST API
 # (auth, bookings, payments, /api/chat, /api/therapist-chat), WebRTC signaling.
-# Run with: uvicorn main:app --reload
+# Run with: uvicorn api:app --reload
 #
 # This is a different entry point from src/main.py, which is the DESKTOP CLI
 # app (webcam + microphone loop, keyboard-driven). They share the same

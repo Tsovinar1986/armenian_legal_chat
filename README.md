@@ -11,7 +11,7 @@ All rights reserved — see [LICENSE](LICENSE). This is not open-source software
 - Therapist-matching (mirroring the lawyer top-lawyer/similar-cases ranking, using `get_top_lawyer_for_query`-style logic) is not built — `MentalHealthQAClassifier` currently does supportive Q&A retrieval only, not matching to a specific human therapist.
 - Payments are wired end-to-end against Stripe's API but need real `STRIPE_SECRET_KEY`/`STRIPE_PUBLISHABLE_KEY`/`STRIPE_WEBHOOK_SECRET` values and Apple Pay domain verification (both in the Stripe Dashboard) before they'll work outside of tests.
 - `/mood-tracking` and `/therapist` are backend-ready placeholder pages (same status as the auth/booking demo UI) — a B2B partner's real frontend still needs to be built against the underlying APIs.
-- `chat_sessions` and `therapist_chat_sessions` in `main.py` are still in-memory only and reset on server restart; only users/bookings/payments are persisted in SQLite.
+- `chat_sessions` and `therapist_chat_sessions` in `api.py` are still in-memory only and reset on server restart; only users/bookings/payments are persisted in SQLite.
 - Booking a therapist session currently only wires through to payment (`/pay?consultation_type=therapist`); it doesn't yet also create a calendar `booking` record automatically.
 - Availability (`/api/bookings/availability`) uses a fixed default business-hours window (09:00–18:00) for every provider — there's no per-provider schedule/working-hours configuration yet, and no concept of days off/holidays.
 - The legal/therapist crews (`src/agents/legal_crew.py`, `src/agents/therapist_crew.py`) run two sequential LLM calls (researcher then writer) instead of one, so RAG-fallback and therapist-chat responses are slower than before; if `crewai` isn't installed or a call fails, both paths fall back to their pre-crew behavior (a template message / direct QA retrieval) rather than erroring.
@@ -33,7 +33,7 @@ All rights reserved — see [LICENSE](LICENSE). This is not open-source software
 
 | Path | Role |
 |------|------|
-| `src/main.py` | Desktop CLI entry point: Ollama + Chroma, vision, voice, hotkeys (see the file-header comment for how this differs from `main.py`) |
+| `src/main.py` | Desktop CLI entry point: Ollama + Chroma, vision, voice, hotkeys (see the file-header comment for how this differs from `api.py`) |
 | `src/services/` | `vision.py`, `voice.py`, `ingestion.py`, `classifier.py` (case matching + zero-shot mental-health risk + `MentalHealthQAClassifier`), `crisis_detection.py` (keyword crisis check) |
 | `src/agents/legal_agent.py` | Orchestrates the legal RAG pipeline: classifier match → vector search → `legal_crew.py`, multi-turn conversation memory |
 | `src/agents/legal_crew.py` | CrewAI researcher+writer crew that drafts the Armenian RAG-fallback answer |
@@ -42,7 +42,7 @@ All rights reserved — see [LICENSE](LICENSE). This is not open-source software
 | `src/db/vector_store.py` | `ChromaVectorStore` — talks to `chromadb` directly (not `langchain-chroma`; see "Vector search & CrewAI" below) |
 | `src/db/portal_store.py` | SQLite persistence for the web portal (users, bookings, password resets, payments); hashed passwords |
 | `src/data/` | Case lists, CSVs, exports (large files may be gitignored) |
-| `main.py` | FastAPI web portal: auth, bookings/availability, payments, WebRTC signaling, `/api/chat` and `/api/therapist-chat` (see the file-header comment for how this differs from `src/main.py`) |
+| `api.py` | FastAPI web portal: auth, bookings/availability, payments, WebRTC signaling, `/api/chat` and `/api/therapist-chat` (see the file-header comment for how this differs from `src/main.py`) |
 | `notebook/` | EDA, labeling, and modeling experiments |
 
 ## Prerequisites
@@ -76,14 +76,14 @@ See "Vector search & multi-agent orchestration (CrewAI)" below for why this has 
 
 ### Vector search & multi-agent orchestration (CrewAI)
 
-Legal RAG-fallback answers (`main.py`'s `/api/chat`, and `src/main.py`'s CLI) and therapist supportive-chat answers (`/api/therapist-chat`) are drafted by a two-agent CrewAI crew — a **Researcher** agent that organizes already-retrieved context (case precedents / a similar past Q&A pair), and a **Writer** agent that drafts the final response from what the Researcher produced. See `src/agents/legal_crew.py` and `src/agents/therapist_crew.py`.
+Legal RAG-fallback answers (`api.py`'s `/api/chat`, and `src/main.py`'s CLI) and therapist supportive-chat answers (`/api/therapist-chat`) are drafted by a two-agent CrewAI crew — a **Researcher** agent that organizes already-retrieved context (case precedents / a similar past Q&A pair), and a **Writer** agent that drafts the final response from what the Researcher produced. See `src/agents/legal_crew.py` and `src/agents/therapist_crew.py`.
 
 Two implementation details worth knowing if you touch this code:
 
 - **The researcher agents are never given a callable tool.** The local Ollama model in use (`armenia-lawyer-router`) does not support tool/function calling — giving a crewai `Agent` any `tools=[...]` against this model fails with `Error code: 400 ... does not support tools`. Retrieval therefore stays exactly where it already was (plain Python, before the crew runs) and is handed to the researcher as task input instead.
 - **`crewai` is intentionally not a normal line in `requirements.txt`.** It hard-pins `chromadb~=1.1.0` (true across every version from 1.0.0 to 1.15.2, the newest at time of writing). That's a problem for two reasons: (1) it conflicts with the `chromadb>=1.5.9` this project actually needs, and (2) chromadb's on-disk format isn't backward compatible — `chromadb<1.2` can't even open a `./chroma_legal_data` directory written by `chromadb>=1.5` (it crashes with a Rust panic on open, not a clean error). Vector search was moved off `langchain-chroma` onto a small direct-`chromadb` wrapper (`src/db/vector_store.py`, `ChromaVectorStore`) specifically to remove that pin conflict from the *chromadb version itself*; `crewai` is still installed separately with `--no-deps` so pip never tries to resolve its chromadb requirement at all. crewai's `Agent`/`Task`/`Crew`/`LLM` classes work fine this way — only crewai's own optional memory/knowledge features need its pinned chromadb version, and this project doesn't use them.
 
-The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database. Both the CLI (`src/main.py`) and the web chat (`main.py`) keep real multi-turn conversation history: follow-up questions are folded into the search query, and the RAG fallback path passes the conversation into the LLM prompt, so context carries across turns instead of treating every message as a fresh, unrelated question.
+The typed question path now normalizes Unicode input exactly like microphone input. When a typed or spoken question matches a known case, the answer automatically includes the recommended lawyer for that case plus the lawyer with the strongest approved-case track record among similar cases in the database. Both the CLI (`src/main.py`) and the web chat (`api.py`) keep real multi-turn conversation history: follow-up questions are folded into the search query, and the RAG fallback path passes the conversation into the LLM prompt, so context carries across turns instead of treating every message as a fresh, unrelated question.
 
 ### Crisis/safety and mental-health risk screening
 
@@ -115,7 +115,7 @@ Every message still goes through the same crisis check as legal chat first (keyw
 
 ### Payments (Apple Pay / Google Pay / card) via Stripe
 
-`POST /api/payments/create-intent`, `GET /api/payments/{payment_id}`, and `POST /api/payments/webhook` in `main.py` handle payment for both lawyer and therapist consultations through [Stripe](https://stripe.com). Stripe's Payment Element (used on the `/pay` demo page) shows card, Apple Pay, and Google Pay automatically for eligible browsers/devices from one integration — no separate code per payment method.
+`POST /api/payments/create-intent`, `GET /api/payments/{payment_id}`, and `POST /api/payments/webhook` in `api.py` handle payment for both lawyer and therapist consultations through [Stripe](https://stripe.com). Stripe's Payment Element (used on the `/pay` demo page) shows card, Apple Pay, and Google Pay automatically for eligible browsers/devices from one integration — no separate code per payment method.
 
 Requires these environment variables (never commit real keys):
 - `STRIPE_SECRET_KEY` — server-side key, required for `create-intent` to work.
@@ -159,7 +159,7 @@ The vision stack (PyTorch + YOLOv8 + MediaPipe Pose/FaceMesh, `src/services/visi
 ## Run the web portal (chat API, auth, bookings, video calls)
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Open http://localhost:8000 for a demo UI including an Armenian Legal AI chat widget, or integrate directly against `POST /api/chat` and `GET /api/chat/{session_id}` — see [START_HERE.md](START_HERE.md) for the full API contract. Users and bookings are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords instead of the earlier in-memory, plaintext-password version. Chat history is still in-memory per server process (resets on restart).
@@ -171,7 +171,7 @@ If `uvicorn` fails with `[Errno 48] Address already in use`, something is alread
 **Option A — use a different port** (no need to touch the other process):
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8080
+uvicorn api:app --reload --host 0.0.0.0 --port 8080
 ```
 
 Then open http://localhost:8080 instead.

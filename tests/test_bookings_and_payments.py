@@ -3,14 +3,14 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-import main
+import api
 from src.db import portal_store
 
 
 class BookingProviderTypeTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        self.client = TestClient(main.app)
+        self.client = TestClient(api.app)
 
     def test_booking_defaults_to_lawyer_provider_type(self):
         res = self.client.post("/api/bookings", json={
@@ -39,10 +39,10 @@ class BookingProviderTypeTests(unittest.TestCase):
 class PaymentEndpointTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        self.client = TestClient(main.app)
+        self.client = TestClient(api.app)
 
     def test_create_intent_fails_cleanly_without_stripe_key(self):
-        with patch.object(main, "STRIPE_SECRET_KEY", ""):
+        with patch.object(api, "STRIPE_SECRET_KEY", ""):
             res = self.client.post("/api/payments/create-intent", json={
                 "consultation_type": "lawyer",
                 "customer_name": "Alice",
@@ -53,7 +53,7 @@ class PaymentEndpointTests(unittest.TestCase):
         self.assertIn("STRIPE_SECRET_KEY", data["message"])
 
     def test_create_intent_rejects_invalid_consultation_type(self):
-        with patch.object(main, "STRIPE_SECRET_KEY", "sk_test_dummy"):
+        with patch.object(api, "STRIPE_SECRET_KEY", "sk_test_dummy"):
             res = self.client.post("/api/payments/create-intent", json={
                 "consultation_type": "plumber",
                 "customer_name": "Alice",
@@ -63,9 +63,9 @@ class PaymentEndpointTests(unittest.TestCase):
 
     def test_create_intent_success_stores_payment(self):
         fake_intent = {"id": "pi_123", "client_secret": "pi_123_secret", "status": "requires_payment_method"}
-        with patch.object(main, "STRIPE_SECRET_KEY", "sk_test_dummy"), \
-             patch.object(main, "STRIPE_PUBLISHABLE_KEY", "pk_test_dummy"), \
-             patch.object(main.stripe.PaymentIntent, "create", return_value=fake_intent) as mock_create:
+        with patch.object(api, "STRIPE_SECRET_KEY", "sk_test_dummy"), \
+             patch.object(api, "STRIPE_PUBLISHABLE_KEY", "pk_test_dummy"), \
+             patch.object(api.stripe.PaymentIntent, "create", return_value=fake_intent) as mock_create:
             res = self.client.post("/api/payments/create-intent", json={
                 "consultation_type": "therapist",
                 "customer_name": "Alice",
@@ -83,7 +83,7 @@ class PaymentEndpointTests(unittest.TestCase):
         self.assertEqual(stored["consultation_type"], "therapist")
 
     def test_webhook_without_secret_configured(self):
-        with patch.object(main, "STRIPE_WEBHOOK_SECRET", ""):
+        with patch.object(api, "STRIPE_WEBHOOK_SECRET", ""):
             res = self.client.post("/api/payments/webhook", content=b"{}", headers={"stripe-signature": "x"})
         self.assertFalse(res.json()["success"])
 
@@ -91,11 +91,11 @@ class PaymentEndpointTests(unittest.TestCase):
 class TherapistChatTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        main.therapist_chat_sessions.clear()
-        self.client = TestClient(main.app)
+        api.therapist_chat_sessions.clear()
+        self.client = TestClient(api.app)
 
     def test_crisis_keyword_short_circuits_before_qa_classifier(self):
-        with patch.object(main, "get_mental_health_qa_classifier") as mock_get_qa:
+        with patch.object(api, "get_mental_health_qa_classifier") as mock_get_qa:
             res = self.client.post("/api/therapist-chat", json={"message": "I want to kill myself"})
         data = res.json()
         self.assertTrue(data["success"])
@@ -104,8 +104,8 @@ class TherapistChatTests(unittest.TestCase):
 
     def test_non_crisis_message_uses_therapist_crew(self):
         mock_qa = MagicMock()
-        with patch.object(main, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(main, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
+        with patch.object(api, "get_mental_health_qa_classifier", return_value=mock_qa), \
+             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
              patch("src.agents.therapist_crew.run_therapist_crew", return_value="A warm supportive reply.") as mock_crew:
             res = self.client.post("/api/therapist-chat", json={"message": "I feel stressed about my exams"})
         data = res.json()
@@ -122,8 +122,8 @@ class TherapistChatTests(unittest.TestCase):
             "label": "stress",
             "similarity_score": 0.8,
         }
-        with patch.object(main, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(main, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
+        with patch.object(api, "get_mental_health_qa_classifier", return_value=mock_qa), \
+             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
              patch("src.agents.therapist_crew.run_therapist_crew", side_effect=RuntimeError("crew failed")):
             res = self.client.post("/api/therapist-chat", json={"message": "I feel stressed about my exams"})
         data = res.json()

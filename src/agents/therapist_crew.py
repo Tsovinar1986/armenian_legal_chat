@@ -13,7 +13,7 @@ calling. Retrieval stays in Python and is handed to the researcher as task
 input instead.
 
 Crisis/safety checks (src/services/crisis_detection.py and
-LegalCaseClassifier.classify_mental_health_risk) run in main.py's
+LegalCaseClassifier.classify_mental_health_risk) run in api.py's
 /api/therapist-chat handler BEFORE this crew is ever invoked, and this module
 has no path back into that logic. That ordering matters more here than on the
 legal side: the underlying counseling dataset itself contains "suicidal

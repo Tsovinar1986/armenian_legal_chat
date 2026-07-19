@@ -46,7 +46,7 @@ Follow-up questions now carry context from earlier turns in the same conversatio
 - The RAG fallback path (Step 4, when no classifier/vector match is found) passes the full recent conversation into the LLM prompt so generated answers stay consistent with what was already discussed
 - Wired into both interfaces:
   - CLI (`src/main.py`): `LegalAIController` keeps `self.conversation_history` across `t`/`m` turns for the life of the process
-  - Web chat (`main.py`): `/api/chat` keeps history per `session_id` (client must pass the `session_id` returned from the first response on every subsequent call)
+  - Web chat (`api.py`): `/api/chat` keeps history per `session_id` (client must pass the `session_id` returned from the first response on every subsequent call)
 
 **How to use:**
 1. Ask a question, get an answer, then ask a follow-up in the same session (same CLI process, or same `session_id` for the web API)
@@ -55,7 +55,7 @@ Follow-up questions now carry context from earlier turns in the same conversatio
 ---
 
 ### 4. **Browser-Based Legal AI Chat API**
-The FastAPI portal (`main.py`) now exposes the same legal Q&A used by the CLI as a web API, for a B2B partner's frontend (or the built-in demo chat widget) to call directly.
+The FastAPI portal (`api.py`) now exposes the same legal Q&A used by the CLI as a web API, for a B2B partner's frontend (or the built-in demo chat widget) to call directly.
 
 **Endpoints:**
 - `POST /api/chat` — body `{message, session_id}` (session_id optional on the first call), returns `{success, session_id, response}`
@@ -143,12 +143,12 @@ Legal RAG-fallback answers and therapist supportive-chat answers are now drafted
 
 **Features:**
 - `src/agents/legal_crew.py` (`run_legal_crew`) and `src/agents/therapist_crew.py` (`run_therapist_crew`): each builds a sequential `Crew` of a Researcher agent (organizes already-retrieved context) and a Writer agent (drafts the final response), using `crewai.LLM(model="ollama/<model>")` against the existing local model
-- Wired in: `LegalAgent._generate_rag_response()` calls `run_legal_crew()`; `main.py`'s `/api/therapist-chat` calls `run_therapist_crew()`. Both fall back to their pre-crew behavior on any exception (missing `crewai`, a failed call, etc.)
+- Wired in: `LegalAgent._generate_rag_response()` calls `run_legal_crew()`; `api.py`'s `/api/therapist-chat` calls `run_therapist_crew()`. Both fall back to their pre-crew behavior on any exception (missing `crewai`, a failed call, etc.)
 - **No tools given to the researcher agents** — `armenia-lawyer-router` (the local Ollama model) returns a 400 error if a crewai `Agent` is given `tools=[...]`, since it doesn't support tool/function calling. Retrieval stays in plain Python before the crew runs.
 - `src/db/vector_store.py` (`ChromaVectorStore`, `Document`): a small direct-`chromadb` wrapper replacing `langchain_chroma.Chroma`, implementing just the interface this project uses (`similarity_search`, `similarity_search_with_score`, `add_texts`) — needed because `crewai` hard-pins `chromadb~=1.1.0`, which conflicts with `langchain-chroma`'s `chromadb>=1.3.5`
 - `crewai` is intentionally **not** a normal `requirements.txt` line — its chromadb pin is not just a version-metadata conflict but a real data-format incompatibility (`chromadb<1.2` cannot open a `./chroma_legal_data` directory written by `chromadb>=1.5` — confirmed Rust-panic crash, not a clean error). Install it separately: `pip install --no-deps crewai==1.15.2`, documented in README.md/requirements.txt
 - Added `LICENSE` — all-rights-reserved/proprietary, not MIT, since this codebase may be sold or exclusively licensed
-- Added file-header comments to `main.py` and `src/main.py` clarifying they're separate entry points (web portal vs. desktop CLI), not two versions of the same file
+- Added file-header comments to `api.py` and `src/main.py` clarifying they're separate entry points (web portal vs. desktop CLI), not two versions of the same file
 
 **How to use:**
 No action needed for existing callers — `/api/chat`, `/api/therapist-chat`, and the CLI (`t`/`m`) all use the crews automatically once `crewai` is installed (see README.md's two-step install). Without it, both paths still work via their previous fallback behavior.
@@ -215,7 +215,7 @@ No action needed for existing callers — `/api/chat`, `/api/therapist-chat`, an
    - `self.conversation_history` tracked across `t`/`m` turns and passed into `get_advice()`
    - Fixed `LegalCaseClassifier(data_folder=...)` to point at `src/data` instead of an empty auto-created `data/` folder
 
-4. **`main.py`** - FastAPI portal
+4. **`api.py`** - FastAPI portal
    - `get_legal_agent()` - Lazily initializes the shared `LegalAgent` (`ChromaVectorStore` + classifier + Ollama LLM) for the web process
    - `POST /api/chat`, `GET /api/chat/{session_id}` - Browser/partner-integration chat API with per-session history
    - `POST /api/therapist-chat` - now delegates to `run_therapist_crew()` (see `src/agents/therapist_crew.py`) instead of directly formatting the QA classifier's result, falling back to direct retrieval if the crew fails

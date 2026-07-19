@@ -1,4 +1,4 @@
-"""SQLite-backed persistence for the FastAPI portal (main.py): users, bookings,
+"""SQLite-backed persistence for the FastAPI portal (api.py): users, bookings,
 and password-reset OTPs. Replaces the previous in-memory lists, which lost all
 data on every restart and stored passwords in plaintext.
 """

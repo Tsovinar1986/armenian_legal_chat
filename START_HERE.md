@@ -31,7 +31,7 @@ export STRIPE_WEBHOOK_SECRET="whsec_..."      # only needed for /api/payments/we
 Start the FastAPI app:
 
 ```bash
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Then open:
@@ -47,7 +47,7 @@ Then open:
 
 - **Run on a different port instead**, e.g.:
   ```bash
-  uvicorn main:app --reload --host 0.0.0.0 --port 8080
+  uvicorn api:app --reload --host 0.0.0.0 --port 8080
   ```
   then open http://localhost:8080.
 
