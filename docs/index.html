@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Armenian Legal AI — API Reference</title>
+  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  <style>
+    body { margin: 0; background: #08111d; }
+    .topbar { background: #111c2c; color: #f5f7fa; padding: 14px 20px; font-family: Arial, sans-serif; border-bottom: 1px solid #23344f; }
+    .topbar h1 { font-size: 16px; margin: 0 0 4px; }
+    .topbar p { font-size: 13px; margin: 0; color: #9fb0cb; }
+    .topbar a { color: #60a5fa; }
+    .swagger-ui .topbar { display: none; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>⚖️ Armenian Legal AI — API Reference (static, read-only)</h1>
+    <p>
+      This is a static snapshot of the backend's API shape, published via GitHub Pages — it does not run the actual
+      server (Ollama, SQLite, Stripe are not available here, so "Try it out" calls will fail). To run the real
+      backend, clone the repo and follow <a href="https://github.com/Tsovinar1986/armenian_legal_chat/blob/main/START_HERE.md">START_HERE.md</a>.
+    </p>
+  </div>
+  <div id="swagger-ui"></div>
+  <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script>
+    window.onload = () => {
+      window.ui = SwaggerUIBundle({
+        url: "./openapi.json",
+        dom_id: "#swagger-ui",
+        presets: [SwaggerUIBundle.presets.apis],
+        layout: "BaseLayout",
+      });
+    };
+  </script>
+</body>
+</html>

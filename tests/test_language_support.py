@@ -29,8 +29,6 @@ class GetCrisisResponseTests(unittest.TestCase):
 class ChatLanguageParamTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        api.chat_sessions.clear()
-        api.therapist_chat_sessions.clear()
         self.client = TestClient(api.app)
 
     def test_legal_chat_crisis_response_respects_language(self):

@@ -9,8 +9,6 @@ from src.db import portal_store
 class AuthFlowTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        api.chat_sessions.clear()
-        api.therapist_chat_sessions.clear()
         self.client = TestClient(api.app)
 
     def test_register_login_and_reset_password_for_lawyer_with_phone(self):

@@ -8,13 +8,14 @@ All rights reserved — see [LICENSE](LICENSE). This is not open-source software
 
 ## Remaining work
 - Add object detection support for action and scene understanding.
-- Therapist-matching (mirroring the lawyer top-lawyer/similar-cases ranking, using `get_top_lawyer_for_query`-style logic) is not built — `MentalHealthQAClassifier` currently does supportive Q&A retrieval only, not matching to a specific human therapist.
+- Therapist-matching (mirroring the lawyer top-lawyer/similar-cases ranking, using `get_top_lawyer_for_query`-style logic) is not built — `MentalHealthQAClassifier` currently does supportive Q&A retrieval only, not matching to a specific human therapist. Blocked on a real therapist directory dataset (names/specialties), which doesn't exist yet.
 - Payments are wired end-to-end against Stripe's API but need real `STRIPE_SECRET_KEY`/`STRIPE_PUBLISHABLE_KEY`/`STRIPE_WEBHOOK_SECRET` values and Apple Pay domain verification (both in the Stripe Dashboard) before they'll work outside of tests.
 - `/mood-tracking` and `/therapist` are backend-ready placeholder pages (same status as the auth/booking demo UI) — a B2B partner's real frontend still needs to be built against the underlying APIs.
-- `chat_sessions` and `therapist_chat_sessions` in `api.py` are still in-memory only and reset on server restart; only users/bookings/payments are persisted in SQLite.
-- Booking a therapist session currently only wires through to payment (`/pay?consultation_type=therapist`); it doesn't yet also create a calendar `booking` record automatically.
-- Availability (`/api/bookings/availability`) uses a fixed default business-hours window (09:00–18:00) for every provider — there's no per-provider schedule/working-hours configuration yet, and no concept of days off/holidays.
 - The legal/therapist crews (`src/agents/legal_crew.py`, `src/agents/therapist_crew.py`) run two sequential LLM calls (researcher then writer) instead of one, so RAG-fallback and therapist-chat responses are slower than before; if `crewai` isn't installed or a call fails, both paths fall back to their pre-crew behavior (a template message / direct QA retrieval) rather than erroring.
+- Session tokens (`POST /api/auth/login`/`register` now issue one, validated via `GET /api/auth/me`) are additive/opt-in — no existing endpoint actually *requires* a valid token yet, so this is infrastructure for future auth-gating, not enforcement.
+- The classifier-match/vector-match template responses in `LegalAgent.get_advice()` (Steps 2-3) are still fixed Armenian text regardless of the `language` request field — only the free-text LLM-drafted answer and the crisis response are actually multi-language (see "Language support" below).
+- No production-grade database (still SQLite), no TURN/STUN server for WebRTC calls across restrictive networks (needs real infrastructure to provision, not just code) — both out of scope for a code-only pass.
+- A static, read-only API reference is published via GitHub Pages from `docs/` (Swagger UI + `docs/openapi.json`, regenerate with `python -c "import json, api; json.dump(api.app.openapi(), open('docs/openapi.json','w'), indent=2)"` after changing endpoints) — it does not run the actual backend (no Ollama/SQLite/Stripe there), and Pages needs to be enabled once in this repo's Settings → Pages → Source → Deploy from a branch → `main` / `/docs`, which requires GitHub UI access this environment doesn't have.
 
 ## Completed vision updates
 - Shared classifier module implemented in `src/services/vision_classifier.py` for action and emotion inference.

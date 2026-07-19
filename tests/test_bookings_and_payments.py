@@ -91,7 +91,6 @@ class PaymentEndpointTests(unittest.TestCase):
 class TherapistChatTests(unittest.TestCase):
     def setUp(self):
         portal_store.clear_all()
-        api.therapist_chat_sessions.clear()
         self.client = TestClient(api.app)
 
     def test_crisis_keyword_short_circuits_before_qa_classifier(self):

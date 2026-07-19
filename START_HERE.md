@@ -117,8 +117,16 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 
 - POST /api/auth/register
   - Body: name, email, phone_number, password, role, license_number
+  - Response now also includes `token` — a session token (30-day expiry), validated via GET /api/auth/me
 - POST /api/auth/login
   - Body: identifier, password, role
+  - Response now also includes `token`
+- POST /api/auth/logout
+  - Body: `token`
+- GET /api/auth/me
+  - Header: `Authorization: Bearer <token>`
+  - Response: `success`, `user_id`, `role` (or `success: false` if the token is missing/invalid/expired)
+  - Session tokens are additive/opt-in right now — no other endpoint requires one yet
 - POST /api/auth/forgot-password
   - Body: identifier, channel
 - POST /api/auth/reset-password
@@ -131,8 +139,14 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 - POST /api/bookings
   - Body: title, client_name, lawyer_name (holds the provider's name — lawyer or therapist), start_time, role, `provider_type` (optional, `"lawyer"` or `"therapist"`, defaults to `"lawyer"`), `timezone` (optional IANA name e.g. `"Asia/Yerevan"`, defaults to `"UTC"` — used to interpret `start_time` if it has no UTC offset)
 - GET /api/bookings/availability
-  - Query params: `provider_name`, `date` (`YYYY-MM-DD`, interpreted in `timezone`), `timezone` (default `"UTC"`), `slot_minutes` (default 60), `start_hour`/`end_hour` (default 9/18 — fixed business hours, not yet per-provider)
+  - Query params: `provider_name`, `date` (`YYYY-MM-DD`, interpreted in `timezone`), `timezone` (default `"UTC"`), `slot_minutes` (default 60), `start_hour`/`end_hour` (optional — if omitted, uses the provider's configured schedule for that weekday if set via POST /api/providers/schedule, else defaults to 9/18)
   - Response: `success`, `slots: [{local_start, local_end, utc_start, utc_end, is_free}, ...]` — every slot is shown in both the requested timezone and UTC
+- POST /api/providers/schedule
+  - Body: `provider_name`, `weekday` (0=Monday..6=Sunday), `start_hour`, `end_hour`, `timezone` (default `"UTC"`)
+  - Upsert — call again with the same provider_name/weekday to change it
+- GET /api/providers/schedule
+  - Query params: `provider_name`
+  - Response: `success`, `provider_name`, `schedule` (list of configured weekdays)
 
 ### Legal AI chat
 
@@ -142,7 +156,7 @@ Use these endpoints from the mobile app as the backend contract for web, Android
   - Before any legal-advice logic runs, every message is screened for self-harm/suicide risk language (keyword check + zero-shot classification — see README.md "Crisis/safety and mental-health risk screening"). If flagged, `response` is a fixed message with real emergency contact numbers instead of a legal answer.
 - GET /api/chat/{session_id}
   - Returns the full message history for that session: `[{role: "user"|"bot", text, at}, ...]`
-  - Chat history is in-memory per server process (resets on restart); user/booking data is persisted separately in SQLite
+  - Chat history is persisted in SQLite (`portal_store.chat_messages`, keyed by session_id + session_type) and survives server restarts
 
 ### Therapist chat (supportive Q&A, not legal advice, not a licensed therapist)
 
@@ -155,13 +169,13 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 ### Payments (Stripe — card, Apple Pay, Google Pay)
 
 - POST /api/payments/create-intent
-  - Body: `consultation_type` (`"lawyer"` or `"therapist"`), `customer_name`, `amount_cents`, `currency` (default `"usd"`)
+  - Body: `consultation_type` (`"lawyer"` or `"therapist"`), `customer_name`, `amount_cents`, `currency` (default `"usd"`), optionally `provider_name`, `start_time`, `timezone` (default `"UTC"`) — if `start_time` is given, a successful payment automatically creates the matching calendar `booking` once Stripe confirms it (via the webhook), instead of payment and booking being two disconnected steps
   - Response: `success`, `payment_id`, `client_secret`, `publishable_key` — feed `client_secret` + `publishable_key` into Stripe.js on the client to complete payment (see `/pay` for a reference implementation)
   - Returns `success: false` with a clear message if `STRIPE_SECRET_KEY` isn't set on the server
 - GET /api/payments/{payment_id}
-  - Returns the stored payment record (status, amount, consultation_type, etc.)
+  - Returns the stored payment record (status, amount, consultation_type, provider_name, start_time, booking_id once auto-created, etc.)
 - POST /api/payments/webhook
-  - Configure this URL in the Stripe Dashboard so payment status stays correct even if the client disconnects before confirming
+  - Configure this URL in the Stripe Dashboard so payment status stays correct even if the client disconnects before confirming; also triggers the auto-booking above on `payment_intent.succeeded`
 
 ### Real-time communication
 
@@ -191,9 +205,9 @@ Use these endpoints from the mobile app as the backend contract for web, Android
 ## 8. Notes
 
 - The current video call uses local browser media and a simple signaling server.
-- Users, bookings, and payments are persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords — this survives restarts, unlike the earlier in-memory version.
-- Still missing for production: token/session-based auth (login currently just verifies the password per request, it doesn't issue a session token), a production-grade database if you outgrow SQLite, a TURN/STUN setup for reliable calls across networks, and real Stripe keys + Apple Pay domain verification (payments return a clear "not configured" error without them).
-- Chat conversation history (both `/api/chat` and `/api/therapist-chat`) is still in-memory per server process and resets on restart; only user/booking/payment data is persisted so far.
+- Users, bookings, payments, chat history, session tokens, and provider schedules are all persisted in a local SQLite database (`portal.db`, gitignored) with salted/hashed passwords — everything survives restarts now.
+- Session tokens exist (`POST /api/auth/login`/`register` issue one, `GET /api/auth/me` validates it) but are opt-in — no endpoint requires one yet, so this is infrastructure, not enforcement.
+- Still missing for production: a production-grade database if you outgrow SQLite, a TURN/STUN setup for reliable calls across networks (needs real infrastructure, not just code), and real Stripe keys + Apple Pay domain verification (payments return a clear "not configured" error without them).
 - Therapist-matching to a specific human therapist (mirroring the lawyer top-lawyer ranking) is not built — `/api/therapist-chat` is supportive Q&A retrieval only.
 - The `/api/chat` endpoint requires Ollama running locally with the `nomic-embed-text` and `armenia-lawyer-router` models pulled — see `OLLAMA setup.md`.
 - The zero-shot mental-health risk model (`transformers` + `torch`, ~280MB) downloads on first use, the first time any message reaches the crisis-check step — expect a one-time delay on the very first chat message after starting the server.

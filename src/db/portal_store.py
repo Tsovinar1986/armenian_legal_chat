@@ -6,7 +6,7 @@ import hashlib
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timezone as dt_timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -80,6 +80,49 @@ def init_db() -> None:
                 stripe_payment_intent_id TEXT NOT NULL UNIQUE,
                 status TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            )
+        """)
+        # Migration: optional scheduling fields so a successful payment can
+        # auto-create a booking (see api.py's webhook handler and
+        # create_booking_from_payment_if_scheduled below).
+        payment_columns = {row["name"] for row in conn.execute("PRAGMA table_info(payments)").fetchall()}
+        if "provider_name" not in payment_columns:
+            conn.execute("ALTER TABLE payments ADD COLUMN provider_name TEXT")
+        if "start_time" not in payment_columns:
+            conn.execute("ALTER TABLE payments ADD COLUMN start_time TEXT")
+        if "timezone" not in payment_columns:
+            conn.execute("ALTER TABLE payments ADD COLUMN timezone TEXT NOT NULL DEFAULT 'UTC'")
+        if "booking_id" not in payment_columns:
+            conn.execute("ALTER TABLE payments ADD COLUMN booking_id INTEGER")
+
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                session_type TEXT NOT NULL,
+                role TEXT NOT NULL,
+                text TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages (session_type, session_id)")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS provider_schedules (
+                provider_name TEXT NOT NULL,
+                weekday INTEGER NOT NULL,
+                start_hour INTEGER NOT NULL,
+                end_hour INTEGER NOT NULL,
+                timezone TEXT NOT NULL DEFAULT 'UTC',
+                PRIMARY KEY (provider_name, weekday)
             )
         """)
         conn.commit()
@@ -205,6 +248,132 @@ def update_password(identifier: str, new_password: str) -> bool:
         conn.close()
 
 
+_SESSION_TTL_HOURS = 24 * 30  # 30 days
+
+
+def create_session(user_id: int, role: str, ttl_hours: int = _SESSION_TTL_HOURS) -> str:
+    """Issue a new session token for a user and store only its hash (the raw
+    token is returned once, here, and never persisted — same principle as a
+    password, so a DB leak alone can't be used to impersonate a session)."""
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    now = datetime.now(dt_timezone.utc)
+    expires_at = now.replace(microsecond=0) + timedelta(hours=ttl_hours)
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO sessions (token_hash, user_id, role, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+            (token_hash, user_id, role, now.isoformat(), expires_at.isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return token
+
+
+def get_session(token: str) -> Optional[Dict]:
+    """Return {"user_id", "role"} for a valid, unexpired token, or None."""
+    if not token:
+        return None
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT * FROM sessions WHERE token_hash = ?", (token_hash,)).fetchone()
+        if not row:
+            return None
+        if row["expires_at"] < datetime.now(dt_timezone.utc).isoformat():
+            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+            conn.commit()
+            return None
+        return {"user_id": row["user_id"], "role": row["role"]}
+    finally:
+        conn.close()
+
+
+def delete_session(token: str) -> None:
+    if not token:
+        return
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def append_chat_message(session_id: str, session_type: str, role: str, text: str) -> None:
+    """session_type is "legal" or "therapist" — the two chat domains keep
+    separate histories even if a session_id were ever reused across them."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO chat_messages (session_id, session_type, role, text, created_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, session_type, role, text, datetime.now(dt_timezone.utc).isoformat()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_chat_messages(session_id: str, session_type: str) -> List[Dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT role, text, created_at AS at FROM chat_messages "
+            "WHERE session_id = ? AND session_type = ? ORDER BY id ASC",
+            (session_id, session_type),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_provider_schedule(provider_name: str, weekday: int, start_hour: int, end_hour: int, timezone: str = "UTC") -> Dict:
+    """weekday: 0=Monday .. 6=Sunday (Python date.weekday() convention)."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "INSERT INTO provider_schedules (provider_name, weekday, start_hour, end_hour, timezone) "
+            "VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(provider_name, weekday) DO UPDATE SET start_hour=excluded.start_hour, "
+            "end_hour=excluded.end_hour, timezone=excluded.timezone",
+            (provider_name, weekday, start_hour, end_hour, timezone),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT * FROM provider_schedules WHERE provider_name = ? AND weekday = ?",
+            (provider_name, weekday),
+        ).fetchone()
+        return dict(row)
+    finally:
+        conn.close()
+
+
+def get_provider_schedule(provider_name: str, weekday: int) -> Optional[Dict]:
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM provider_schedules WHERE provider_name = ? AND weekday = ?",
+            (provider_name, weekday),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def list_provider_schedule(provider_name: str) -> List[Dict]:
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM provider_schedules WHERE provider_name = ? ORDER BY weekday ASC",
+            (provider_name,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def start_time_to_utc_iso(start_time: str, tz_name: str) -> Optional[str]:
     """Convert a booking's start_time to a normalized UTC ISO8601 string.
 
@@ -319,13 +488,18 @@ def create_payment(
     stripe_payment_intent_id: str,
     status: str,
     created_at: str,
+    provider_name: str = None,
+    start_time: str = None,
+    timezone: str = "UTC",
 ) -> Dict:
     conn = _connect()
     try:
         cursor = conn.execute(
             "INSERT INTO payments (consultation_type, customer_name, amount_cents, currency, "
-            "stripe_payment_intent_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (consultation_type, customer_name, amount_cents, currency, stripe_payment_intent_id, status, created_at),
+            "stripe_payment_intent_id, status, created_at, provider_name, start_time, timezone) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (consultation_type, customer_name, amount_cents, currency, stripe_payment_intent_id,
+             status, created_at, provider_name, start_time, timezone),
         )
         conn.commit()
         row = conn.execute("SELECT * FROM payments WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -345,6 +519,39 @@ def update_payment_status(stripe_payment_intent_id: str, status: str) -> bool:
         return cursor.rowcount > 0
     finally:
         conn.close()
+
+
+def set_payment_booking_id(stripe_payment_intent_id: str, booking_id: int) -> None:
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE payments SET booking_id = ? WHERE stripe_payment_intent_id = ?",
+            (booking_id, stripe_payment_intent_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def create_booking_from_payment_if_scheduled(payment: Dict) -> Optional[Dict]:
+    """If a paid-for consultation included a start_time, auto-create the
+    calendar booking now that payment succeeded (called from the Stripe
+    webhook on payment_intent.succeeded). Returns the created booking, or
+    None if this payment had no start_time (nothing to schedule) or already
+    has a linked booking_id (avoid double-booking on a duplicate webhook)."""
+    if not payment.get("start_time") or payment.get("booking_id"):
+        return None
+    booking = create_booking(
+        title=f"{payment['consultation_type'].capitalize()} consultation",
+        client_name=payment["customer_name"],
+        lawyer_name=payment.get("provider_name") or "Unassigned",
+        start_time=payment["start_time"],
+        role="individual",
+        provider_type=payment["consultation_type"],
+        timezone=payment.get("timezone") or "UTC",
+    )
+    set_payment_booking_id(payment["stripe_payment_intent_id"], booking["id"])
+    return booking
 
 
 def get_payment(payment_id: int) -> Optional[Dict]:
@@ -375,6 +582,9 @@ def clear_all() -> None:
         conn.execute("DELETE FROM bookings")
         conn.execute("DELETE FROM password_resets")
         conn.execute("DELETE FROM payments")
+        conn.execute("DELETE FROM sessions")
+        conn.execute("DELETE FROM chat_messages")
+        conn.execute("DELETE FROM provider_schedules")
         conn.commit()
     finally:
         conn.close()

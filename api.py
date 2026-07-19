@@ -12,7 +12,7 @@ import os
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone as dt_timezone
-from typing import Dict, List, Set
+from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
 import stripe
@@ -46,19 +46,13 @@ CONSULTATION_TYPES = {"lawyer", "therapist"}
 THERAPIST_CREW_MODEL = "armenia-lawyer-router"
 
 room_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
-# Chat history is per-session and in-memory for v1 (resets on restart); it is fed back
-# into LegalAgent.get_advice() as conversational context, unlike users/bookings which
-# are now persisted in portal_store (SQLite) with hashed passwords.
-chat_sessions: Dict[str, List[Dict[str, str]]] = defaultdict(list)
+# Chat history (both /api/chat and /api/therapist-chat) is persisted in
+# portal_store's chat_messages table, keyed by (session_id, session_type) —
+# it survives restarts, unlike the earlier in-memory-dict version.
 
 _legal_agent = None
 _legal_agent_error: str | None = None
 _mental_health_qa_classifier = None
-
-# Therapist chat is a separate conversation domain from the legal chat above —
-# supportive Q&A retrieval over student_mh_counseling_100k_with_label_column.csv,
-# not legal advice. Kept as its own session store rather than sharing chat_sessions.
-therapist_chat_sessions: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 
 
 def get_mental_health_qa_classifier():
@@ -156,6 +150,11 @@ class PaymentIntentRequest(BaseModel):
     customer_name: str
     amount_cents: int
     currency: str = "usd"
+    # Optional: if provided, a successful payment (webhook payment_intent.succeeded)
+    # auto-creates a calendar booking for this slot — see create_booking_from_payment_if_scheduled.
+    provider_name: str | None = None
+    start_time: str | None = None
+    timezone: str = "UTC"
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -875,7 +874,8 @@ async def register(request: RegisterRequest):
         role=request.role,
         license_number=request.license_number or "",
     )
-    return {"success": True, "message": "Registered successfully", "user": user}
+    token = portal_store.create_session(user["id"], user["role"])
+    return {"success": True, "message": "Registered successfully", "user": user, "token": token}
 
 
 @app.post("/api/auth/login")
@@ -883,7 +883,33 @@ async def login(request: LoginRequest):
     user = portal_store.authenticate_user(request.identifier, request.password, request.role)
     if not user:
         return {"success": False, "message": "Account not found or password is incorrect"}
-    return {"success": True, "message": "Signed in successfully", "user": user}
+    token = portal_store.create_session(user["id"], user["role"])
+    return {"success": True, "message": "Signed in successfully", "user": user, "token": token}
+
+
+class LogoutRequest(BaseModel):
+    token: str
+
+
+@app.post("/api/auth/logout")
+async def logout(request: LogoutRequest):
+    portal_store.delete_session(request.token)
+    return {"success": True, "message": "Signed out"}
+
+
+@app.get("/api/auth/me")
+async def get_current_session(request: Request):
+    """Validate a session token passed as `Authorization: Bearer <token>` and
+    return the associated user. This is additive, opt-in session support —
+    existing endpoints are unchanged and still don't require a token, so this
+    doesn't break any current caller; a future auth-gated endpoint can depend
+    on this same lookup."""
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+    session = portal_store.get_session(token)
+    if not session:
+        return {"success": False, "message": "Invalid or expired session"}
+    return {"success": True, "user_id": session["user_id"], "role": session["role"]}
 
 
 @app.post("/api/auth/forgot-password")
@@ -947,13 +973,14 @@ async def get_availability(
     date: str,
     timezone: str = "UTC",
     slot_minutes: int = 60,
-    start_hour: int = 9,
-    end_hour: int = 18,
+    start_hour: int | None = None,
+    end_hour: int | None = None,
 ):
     """Free/busy slots for a provider on one local calendar date, in both that
-    timezone and UTC. Business hours are a fixed default window (09:00-18:00 in
-    `timezone`) since there's no per-provider schedule configuration yet — every
-    provider is treated as available the same hours every day."""
+    timezone and UTC. If the provider has a configured weekly schedule (see
+    POST /api/providers/schedule) for that weekday, its hours are used;
+    otherwise falls back to a fixed default window (09:00-18:00). Explicit
+    start_hour/end_hour query params always win over both."""
     try:
         tz = ZoneInfo(timezone)
     except Exception:
@@ -962,6 +989,12 @@ async def get_availability(
         day = datetime.strptime(date, "%Y-%m-%d").date()
     except ValueError:
         return {"success": False, "message": "date must be in YYYY-MM-DD format"}
+
+    if start_hour is None or end_hour is None:
+        schedule = await run_in_threadpool(portal_store.get_provider_schedule, provider_name, day.weekday())
+        start_hour = start_hour if start_hour is not None else (schedule["start_hour"] if schedule else 9)
+        end_hour = end_hour if end_hour is not None else (schedule["end_hour"] if schedule else 18)
+
     if not (0 <= start_hour < end_hour <= 24):
         return {"success": False, "message": "start_hour must be less than end_hour, both within 0-24"}
     if slot_minutes <= 0:
@@ -1014,6 +1047,37 @@ async def get_availability(
     }
 
 
+class ProviderScheduleRequest(BaseModel):
+    provider_name: str
+    weekday: int  # 0=Monday .. 6=Sunday
+    start_hour: int
+    end_hour: int
+    timezone: str = "UTC"
+
+
+@app.post("/api/providers/schedule")
+async def set_provider_schedule(request: ProviderScheduleRequest):
+    """Configure a provider's working hours for one weekday (upsert — call
+    again with the same provider_name/weekday to change it). Used by
+    GET /api/bookings/availability instead of the fixed 09:00-18:00 default
+    once set. Days without a configured schedule still use the default."""
+    if not (0 <= request.weekday <= 6):
+        return {"success": False, "message": "weekday must be 0 (Monday) through 6 (Sunday)"}
+    if not (0 <= request.start_hour < request.end_hour <= 24):
+        return {"success": False, "message": "start_hour must be less than end_hour, both within 0-24"}
+    schedule = await run_in_threadpool(
+        portal_store.set_provider_schedule,
+        request.provider_name, request.weekday, request.start_hour, request.end_hour, request.timezone,
+    )
+    return {"success": True, "schedule": schedule}
+
+
+@app.get("/api/providers/schedule")
+async def get_provider_schedule(provider_name: str):
+    schedule = await run_in_threadpool(portal_store.list_provider_schedule, provider_name)
+    return {"success": True, "provider_name": provider_name, "schedule": schedule}
+
+
 @app.post("/api/chat")
 async def chat(request: ChatMessageRequest):
     session_id = request.session_id or str(uuid.uuid4())
@@ -1021,9 +1085,8 @@ async def chat(request: ChatMessageRequest):
     if not user_message:
         return {"success": False, "message": "Please type a message.", "session_id": session_id}
 
-    now = datetime.utcnow().isoformat()
-    history = list(chat_sessions[session_id])  # turns before this message, for conversational context
-    chat_sessions[session_id].append({"role": "user", "text": user_message, "at": now})
+    history = await run_in_threadpool(portal_store.get_chat_messages, session_id, "legal")
+    await run_in_threadpool(portal_store.append_chat_message, session_id, "legal", "user", user_message)
 
     try:
         agent = get_legal_agent()
@@ -1036,13 +1099,14 @@ async def chat(request: ChatMessageRequest):
             f"(is Ollama running? error: {exc})"
         )
 
-    chat_sessions[session_id].append({"role": "bot", "text": response_text, "at": datetime.utcnow().isoformat()})
+    await run_in_threadpool(portal_store.append_chat_message, session_id, "legal", "bot", response_text)
     return {"success": True, "session_id": session_id, "response": response_text}
 
 
 @app.get("/api/chat/{session_id}")
 async def get_chat_history(session_id: str):
-    return {"session_id": session_id, "messages": chat_sessions.get(session_id, [])}
+    messages = await run_in_threadpool(portal_store.get_chat_messages, session_id, "legal")
+    return {"session_id": session_id, "messages": messages}
 
 
 @app.post("/api/therapist-chat")
@@ -1059,8 +1123,7 @@ async def therapist_chat(request: ChatMessageRequest):
         return {"success": False, "message": "Please type a message.", "session_id": session_id}
     language = request.language or "en"
 
-    now = datetime.utcnow().isoformat()
-    therapist_chat_sessions[session_id].append({"role": "user", "text": user_message, "at": now})
+    await run_in_threadpool(portal_store.append_chat_message, session_id, "therapist", "user", user_message)
 
     response_text = None
     if detect_crisis_signal(user_message):
@@ -1103,13 +1166,14 @@ async def therapist_chat(request: ChatMessageRequest):
                     "For a real conversation with a licensed therapist, visit /therapist."
                 )
 
-    therapist_chat_sessions[session_id].append({"role": "bot", "text": response_text, "at": datetime.utcnow().isoformat()})
+    await run_in_threadpool(portal_store.append_chat_message, session_id, "therapist", "bot", response_text)
     return {"success": True, "session_id": session_id, "response": response_text}
 
 
 @app.get("/api/therapist-chat/{session_id}")
 async def get_therapist_chat_history(session_id: str):
-    return {"session_id": session_id, "messages": therapist_chat_sessions.get(session_id, [])}
+    messages = await run_in_threadpool(portal_store.get_chat_messages, session_id, "therapist")
+    return {"session_id": session_id, "messages": messages}
 
 
 @app.post("/api/payments/create-intent")
@@ -1146,6 +1210,9 @@ async def create_payment_intent(request: PaymentIntentRequest):
         stripe_payment_intent_id=intent["id"],
         status=intent["status"],
         created_at=datetime.utcnow().isoformat(),
+        provider_name=request.provider_name,
+        start_time=request.start_time,
+        timezone=request.timezone,
     )
     return {
         "success": True,
@@ -1182,6 +1249,10 @@ async def stripe_webhook(request: Request):
         intent = event["data"]["object"]
         status = "succeeded" if event["type"] == "payment_intent.succeeded" else "failed"
         portal_store.update_payment_status(intent["id"], status)
+        if status == "succeeded":
+            payment = portal_store.get_payment_by_intent(intent["id"])
+            if payment:
+                portal_store.create_booking_from_payment_if_scheduled(payment)
 
     return {"received": True}
 
