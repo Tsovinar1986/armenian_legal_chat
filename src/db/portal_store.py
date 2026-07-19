@@ -12,12 +12,18 @@ from zoneinfo import ZoneInfo
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(_THIS_DIR))
-DB_PATH = os.path.join(_PROJECT_ROOT, "portal.db")
+# Overridable via PORTAL_DB_PATH (e.g. to point at a mounted Docker volume
+# directory rather than the project root) — defaults to the same path used
+# throughout local development.
+DB_PATH = os.environ.get("PORTAL_DB_PATH") or os.path.join(_PROJECT_ROOT, "portal.db")
 
 _PBKDF2_ITERATIONS = 390_000
 
 
 def _connect() -> sqlite3.Connection:
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn

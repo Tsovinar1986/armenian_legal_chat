@@ -6,6 +6,20 @@ This repository is an Armenian-language legal assistance prototype that combines
 
 All rights reserved — see [LICENSE](LICENSE). This is not open-source software.
 
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a map of the codebase and request flow.
+
+### Guardrails (PII, prompt injection, indecent language, RAG groundedness)
+
+`src/guardrails/` is a safety layer separate from (and complementary to) crisis/self-harm detection above — it never replaces that pipeline. `GuardrailManager(domain="legal"|"therapist")` is used by both `LegalAgent.get_advice()` and `/api/therapist-chat`:
+
+- **Input**: prompt-injection patterns and indecent language block the request outright (a short redirect message is returned instead); PII in input is flagged but not blocking.
+- **Output**: PII in a generated response is blocked and a redacted version is used instead; indecent language in output is blocked; for the legal domain only, cited case numbers are checked against the retrieved context they were supposed to come from (`rag_guardrails.py`) — a cheap hallucinated-citation signal, not a full accuracy guarantee.
+- Word/pattern lists live in plain text files (`crisis_terms.txt`, `indecent_terms.txt`, `prompt_injection_patterns.txt`) for easy editing without touching Python.
+
+### Containers
+
+`Dockerfile` + `docker-compose.yml` run `api.py` alongside an Ollama service (kept separate — Ollama is its own large model runtime, not bundled into the app image). `python src/main.py` (the desktop CLI) isn't containerized, since it needs a local webcam/microphone. See `docker-compose.yml`'s comments for first-run model pulls.
+
 ## Remaining work
 - Add object detection support for action and scene understanding.
 - Therapist-matching (mirroring the lawyer top-lawyer/similar-cases ranking, using `get_top_lawyer_for_query`-style logic) is not built — `MentalHealthQAClassifier` currently does supportive Q&A retrieval only, not matching to a specific human therapist. Blocked on a real therapist directory dataset (names/specialties), which doesn't exist yet.
@@ -156,6 +170,23 @@ Controls match the on-screen help: **m** speak, **t** type a question, **u** upl
 Vector data is stored under `./chroma_legal_data` by default.
 
 The vision stack (PyTorch + YOLOv8 + MediaPipe Pose/FaceMesh, `src/services/vision_classifier.py`) is loaded lazily on first actual use — a webcam frame or an uploaded video (`u`) — not at startup. If you answer `n` to the webcam prompt and never upload a video, that whole stack (and its memory footprint, ~270MB+) is never loaded, which matters on memory-constrained machines (e.g. 8GB RAM).
+
+### Qwen vs. armenia-lawyer-router
+
+`src/main_qwen.py` is an A/B comparison variant of `src/main.py` — identical in every way except it constructs `LegalAgent` with `model="qwen3"` instead of the default `armenia-lawyer-router`. It exists to let you directly compare answer quality/style between the two models on the same case data and prompts.
+
+```bash
+ollama pull qwen3        # one-time, before first run (or a sized tag, e.g. qwen3:8b)
+python src/main_qwen.py
+```
+
+**Which one is actually better?** Not something this codebase can answer for you — it depends on how the two models perform on real Armenian legal questions, which needs a native/fluent Armenian legal reader judging actual output side by side. What can be said with confidence:
+
+- `armenia-lawyer-router` is a model fine-tuned specifically for this project's Armenian legal domain — it's reasonable to expect it stays more on-topic and in the expected style by default, since that's what it was tuned for.
+- Qwen3 is a general-purpose, multilingual open-weight model from Alibaba — likely broader general knowledge, but its depth in Armenian specifically (as opposed to its stronger languages) is unverified here.
+- Run both on the same handful of real questions and compare the actual output — that's the only reliable way to decide.
+
+**Is Qwen payable?** Not the way this project uses it. Qwen3's weights are open (Apache 2.0) and run locally through Ollama, exactly like `armenia-lawyer-router` and `nomic-embed-text` already do — no API key, no per-token charge, no usage cost beyond your own machine's compute/electricity. You would only pay for Qwen if you instead called a *hosted* Qwen API (e.g. Alibaba Cloud's DashScope, or a third-party inference provider) rather than running it locally via Ollama — this project does the latter.
 
 ## Run the web portal (chat API, auth, bookings, video calls)
 

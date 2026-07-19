@@ -1,0 +1,15 @@
+# One term per line, case-insensitive substring match. Lines starting with #
+# are comments. Deliberately a small starter list, not an exhaustive
+# profanity database — extend as needed. Used to flag (not silently rewrite)
+# indecent/abusive language in input or generated output so callers can
+# decide how to respond (e.g. a gentler redirect rather than a legal answer).
+#
+# English list below is a reasonable starting set. Armenian profanity terms
+# are intentionally left for a native speaker to add accurately rather than
+# guessed here — add them one per line, same format, when available.
+fuck
+shit
+bitch
+asshole
+bastard
+cunt

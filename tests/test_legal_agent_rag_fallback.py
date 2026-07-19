@@ -15,6 +15,8 @@ def _make_agent(classifier=None):
     agent.court_cases = []
     agent.export_service = MagicMock()
     agent.llm = MagicMock()  # only truthiness is checked before the crew call
+    from src.guardrails import GuardrailManager
+    agent.guardrails = GuardrailManager(domain="legal")
     return agent
 
 

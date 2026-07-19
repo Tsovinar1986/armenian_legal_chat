@@ -6,6 +6,7 @@ from langchain_ollama import OllamaLLM
 from src.services.case_export import CaseExportService
 from src.services.classifier import MentalHealthRiskClassifier
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response, DEFAULT_CRISIS_LANGUAGE
+from src.guardrails import GuardrailManager
 
 class LegalAgent:
     def __init__(self, repo, state, classifier=None, model=None):
@@ -25,6 +26,9 @@ class LegalAgent:
         # Second, heavier crisis-screening signal (see Step 0b in get_advice) —
         # cheap to construct, only trains its Random Forest lazily on first use.
         self.risk_classifier = MentalHealthRiskClassifier()
+        # PII/prompt-injection/indecent-language/RAG-groundedness checks —
+        # separate from and additional to the crisis-detection pipeline above.
+        self.guardrails = GuardrailManager(domain="legal")
 
         # Load court papers data from CSV
         self._load_court_cases()
@@ -178,6 +182,18 @@ class LegalAgent:
             if risk and risk["is_risk"]:
                 return get_crisis_response(language)
 
+        # Step 0c: Input guardrails (prompt injection / indecent language) —
+        # separate from crisis detection above. PII in input is flagged but
+        # not blocking (see input_guardrails.run_input_guardrails), so only
+        # prompt_injection/indecent_language actually stop the request here.
+        if self.guardrails:
+            guard_result = self.guardrails.check_input(user_query)
+            if not guard_result.passed and guard_result.category in ("prompt_injection", "indecent_language"):
+                return (
+                    "Հարցումը չի կարող մշակվել՝ անհարմար կամ անվավեր բովանդակության պատճառով։ "
+                    "Խնդրում ենք վերաձևակերպել ձեր հարցը։"
+                )
+
         # Step 1: Interactive check / Clarification hook
         if len(user_query.split()) < 3:
             return "Խնդրում եմ, նկարագրեք ձեր իրավական խնդիրը մի փոքր ավելի մանրամասն, որպեսզի կարողանամ ճշգրիտ նախադեպեր գտնել:"
@@ -297,6 +313,14 @@ class LegalAgent:
                         language=language,
                     )
                     print(f"✅ Crew response received ({len(response)} characters)")
+
+                    if self.guardrails:
+                        output_check = self.guardrails.check_output(response, context=context)
+                        if not output_check.passed:
+                            print(f"⚠️ Output guardrail flagged response ({output_check.category}): {output_check.reasons}")
+                            if output_check.redacted_text:
+                                response = output_check.redacted_text
+
                     similar_cases_block = self._build_similar_cases_block(search_query)
                     return response + similar_cases_block if similar_cases_block else response
                 except Exception as llm_error:

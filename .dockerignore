@@ -1,0 +1,13 @@
+law/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.git/
+.pytest_cache/
+notebook/.ipynb_checkpoints/
+chroma_legal_data/
+portal.db
+*.mp4
+*.mov
+exports/

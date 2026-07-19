@@ -1,0 +1,43 @@
+# docker compose up
+#
+# Runs the FastAPI backend (api.py) alongside Ollama. First run: pull the
+# models Ollama needs (the app expects these exact names — see README.md):
+#   docker compose exec ollama ollama pull nomic-embed-text
+#   docker compose exec ollama ollama pull armenia-lawyer-router
+# (armenia-lawyer-router is this project's own fine-tuned model — pull/import
+# it however you distribute it; it is not a public Ollama library model.)
+services:
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Ollama's default base URL (localhost:11434) doesn't resolve inside a
+      # container — point litellm/langchain-ollama at the ollama service instead.
+      - OLLAMA_HOST=http://ollama:11434
+      - OLLAMA_API_BASE=http://ollama:11434
+      # Points portal_store.py at the mounted volume below instead of /app
+      # (which is the code directory, not a good place for persistent data).
+      - PORTAL_DB_PATH=/app/data/portal.db
+      # Optional — Stripe payments are a no-op ("not configured") without these.
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
+    volumes:
+      # Vector DB and SQLite persistence survive container restarts/rebuilds.
+      - chroma_data:/app/chroma_legal_data
+      - portal_db:/app/data
+    depends_on:
+      - ollama
+
+volumes:
+  ollama_models:
+  chroma_data:
+  portal_db:

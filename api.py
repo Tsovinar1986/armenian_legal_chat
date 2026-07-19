@@ -23,6 +23,7 @@ from starlette.concurrency import run_in_threadpool
 
 from src.db import portal_store
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response
+from src.guardrails import GuardrailManager
 
 app = FastAPI(title="Armenian Legal Portal", version="1.0.0")
 
@@ -44,6 +45,8 @@ CONSULTATION_TYPES = {"lawyer", "therapist"}
 # therapist_crew.py) — same model the legal side uses, since there isn't a
 # separate specialized model for supportive conversation.
 THERAPIST_CREW_MODEL = "armenia-lawyer-router"
+
+_therapist_guardrails = GuardrailManager(domain="therapist")
 
 room_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
 # Chat history (both /api/chat and /api/therapist-chat) is persisted in
@@ -1129,6 +1132,14 @@ async def therapist_chat(request: ChatMessageRequest):
     if detect_crisis_signal(user_message):
         response_text = get_crisis_response(language)
     else:
+        guard_result = await run_in_threadpool(_therapist_guardrails.check_input, user_message)
+        if not guard_result.passed and guard_result.category in ("prompt_injection", "indecent_language"):
+            response_text = (
+                "This message can't be processed due to inappropriate or invalid content. "
+                "Please rephrase your message."
+            )
+
+    if response_text is None:
         try:
             agent = get_legal_agent()
             if agent.risk_classifier:
@@ -1145,6 +1156,9 @@ async def therapist_chat(request: ChatMessageRequest):
             crew_response = await run_in_threadpool(
                 run_therapist_crew, user_message, qa_classifier, THERAPIST_CREW_MODEL, language
             )
+            output_check = await run_in_threadpool(_therapist_guardrails.check_output, crew_response)
+            if not output_check.passed and output_check.redacted_text:
+                crew_response = output_check.redacted_text
             response_text = (
                 f"{crew_response}\n\n"
                 f"—\nThis is a supportive-conversation demo, not advice from a licensed "

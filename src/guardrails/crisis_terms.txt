@@ -1,0 +1,28 @@
+# One phrase per line, case-insensitive substring match. Lines starting with
+# # are comments. This mirrors src/services/crisis_detection.py's keyword
+# list — kept as a separate, editable data file here so the guardrails layer
+# doesn't need a Python import to extend it. The actual crisis short-circuit
+# in get_advice()/therapist-chat uses crisis_detection.py directly, not this
+# file; this file backs input_guardrails.py's defense-in-depth check.
+# Armenian
+ինքնասպանություն
+ինքնասպան
+ինքնավնաս
+ուզում եմ մեռնել
+ուզում եմ ինձ սպանել
+ուզում եմ մահանալ
+կյանքս չարժե
+ապրելու իմաստ չկա
+վերջ տալ կյանքիս
+ինձ սպանել
+ինձ վնասել եմ ուզում
+# English
+suicide
+suicidal
+kill myself
+want to die
+end my life
+self harm
+self-harm
+hurt myself
+no reason to live
