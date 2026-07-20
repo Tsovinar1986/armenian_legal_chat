@@ -92,6 +92,12 @@ class VisionClassifier:
         return self.emotion_map['neutral']
 
     def detect_emotion(self, frame):
+        """Returns an emotion label only when a face was actually found —
+        None otherwise. Previously this returned emotion_map['neutral'] in
+        both the "face found, no expression signal" case AND the "no face at
+        all" case, so a frame with nobody in it still reported an emotion
+        (e.g. "Սթափ") as if someone were there. Callers should treat None as
+        "no person to read an emotion from", not skip the distinction."""
         if self.mp_face is not None:
             image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.mp_face.process(image_rgb)
@@ -105,7 +111,7 @@ class VisionClassifier:
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
         if len(faces) > 0:
             return self.emotion_map['neutral']
-        return self.emotion_map['neutral']
+        return None
 
     def _is_hands_on_hips(self, lm):
         r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]

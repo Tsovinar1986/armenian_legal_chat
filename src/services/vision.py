@@ -13,6 +13,13 @@ from PIL import Image, ImageDraw, ImageFont
 MENTAL_HEALTH_CONCERN_WINDOW = 30
 MENTAL_HEALTH_CONCERN_RATIO = 0.6
 
+# detect_objects() is restricted to YOLO COCO classes [0, 67] = person, cell
+# phone — so "cell phone" is currently the only non-person class that can
+# ever show up here. Extend this if that class list ever grows.
+OBJECT_NAME_HY = {
+    "cell phone": "հեռախոս",
+}
+
 MENTAL_HEALTH_SUGGESTION_HY = (
     "💙 Վերջին րոպեների ընթացքում նկատվում է տխուր/անհանգիստ տրամադրություն։ "
     "Սա միայն դեմքի արտահայտության վրա հիմնված մոտավոր դիտարկում է, ոչ թե "
@@ -58,52 +65,96 @@ class LegalVisionService:
         else:
             self.state.update_mental_health_concern(False)
 
-    def _draw_unicode_text(self, frame, text, position):
+    def _draw_unicode_text(self, frame, text, position, font_size=20, bg=False):
         img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(img_pil)
         try:
-            font = ImageFont.truetype(self.font_path, 20)
+            font = ImageFont.truetype(self.font_path, font_size)
         except Exception:
             font = ImageFont.load_default()
+        if bg:
+            pad = 6
+            bbox = draw.textbbox(position, text, font=font)
+            draw.rectangle(
+                [bbox[0] - pad, bbox[1] - pad, bbox[2] + pad, bbox[3] + pad],
+                fill=(0, 0, 0),
+            )
         draw.text(position, text, font=font, fill=(0, 255, 0))
         return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-    def process_video(self, video_path, window_name="Legal AI - Video Analysis"):
+    def process_video(self, video_path, window_name="Legal AI - Video Analysis", sample_every=5, max_width=960):
+        """Windowed playback + analysis, tuned to stay usable on an 8GB-RAM
+        machine: uploaded videos are often shot at 4K, and running YOLO+
+        MediaPipe at full resolution on every single frame is the actual
+        RAM/CPU cost — not the window itself. Two levers:
+          - every frame is downscaled to max_width before both detection and
+            display (a 3840-wide frame costs far more to run through the
+            model than a 960-wide one, and the display window doesn't need
+            more than that to be watchable);
+          - the heavy detection pipeline only runs every `sample_every`
+            frames; frames in between just replay the last known status
+            text, so playback stays smooth without re-analyzing every frame.
+        The status bar uses a larger font with a solid background bar (see
+        _draw_unicode_text's bg=True) so it stays readable over busy video
+        content instead of blending into whatever's behind it. Press 'q' to
+        stop early.
+        """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video file: {video_path}")
 
         unique_actions = set()
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+        last_emotion = None
+        last_objects = []
+        frame_idx = 0
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
 
-            processed_frame = self.process_frame(frame)
-            current_actions = self.state.get_actions()
-            if current_actions:
-                unique_actions.update(current_actions)
+                h, w = frame.shape[:2]
+                if w > max_width:
+                    scale = max_width / w
+                    frame = cv2.resize(frame, (max_width, int(h * scale)), interpolation=cv2.INTER_AREA)
 
-            current_emotion = self.state.get_emotion()
-            if current_emotion:
-                processed_frame = self._draw_unicode_text(processed_frame, f"Էմոցիան: {current_emotion}", (10, 70))
+                if frame_idx % sample_every == 0:
+                    frame = self.process_frame(frame)
+                    current_actions = self.state.get_actions()
+                    if current_actions:
+                        unique_actions.update(current_actions)
+                    last_emotion = self.state.get_emotion() or last_emotion
+                    # Object list is per-frame, not accumulated like actions —
+                    # it only ever holds something when the LAST analyzed frame
+                    # had no person in it (see process_frame), so an empty list
+                    # here means either nothing at all, or a person is present
+                    # (in which case unique_actions/last_emotion tell the story).
+                    last_objects = self.state.get_objects()
 
-            status_text = (
-                "Detected: " + ", ".join(sorted(unique_actions)) + f" | Էմոցիան: {current_emotion}"
-                if unique_actions else f"Detecting actions... | Էմոցիան: {current_emotion}"
-            )
-            # cv2.putText's built-in Hershey font is ASCII/Latin-only — Armenian
-            # characters in status_text rendered as "?????" boxes. _draw_unicode_text
-            # (PIL + a Unicode-capable font) already handles this correctly for the
-            # other overlays below; this call was just left on the broken path.
-            processed_frame = self._draw_unicode_text(processed_frame, status_text, (10, 40))
+                # Three distinct states, not two: a person present (actions +
+                # emotion), an object but no person (object detection only —
+                # no fabricated action/emotion for something that isn't a
+                # person), or nothing detected yet.
+                if unique_actions or last_emotion:
+                    status_text = (
+                        ("Հայտնաբերված գործողություններ. " + ", ".join(sorted(unique_actions))
+                         if unique_actions else "Անձ է հայտնաբերվել")
+                        + f" | Էմոցիան. {last_emotion or '...'}"
+                    )
+                elif last_objects:
+                    status_text = "Օբյեկտների հայտնաբերում (անձ չի հայտնաբերվել). " + ", ".join(last_objects)
+                else:
+                    status_text = "Վերլուծություն..."
+                frame = self._draw_unicode_text(frame, status_text, (10, 10), font_size=24, bg=True)
 
-            cv2.imshow(window_name, processed_frame)
-            if cv2.waitKey(25) & 0xFF == ord('q'):
-                break
+                cv2.imshow(window_name, frame)
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+                frame_idx += 1
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
 
-        cap.release()
-        cv2.destroyAllWindows()
         return list(unique_actions)
 
     def analyze_video_headless(self, video_path, max_frames=12):
@@ -160,10 +211,12 @@ class LegalVisionService:
     def process_frame(self, frame):
         results, objects_seen = self.classifier.detect_objects(frame)
         actions_in_frame = []
+        person_present = False
 
         for r in results:
             for box in r.boxes:
                 if self.classifier.yolo.names[int(box.cls[0])] == 'person':
+                    person_present = True
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     crop = frame[y1:y2, x1:x2]
                     if crop.size == 0:
@@ -174,7 +227,18 @@ class LegalVisionService:
                     for idx, action in enumerate(actions):
                         frame = self._draw_unicode_text(frame, action, (x1, y1 - 30 - idx * 22))
 
-        emotion = self.classifier.detect_emotion(frame)
+        # Non-person objects (e.g. a phone) seen in a frame with nobody in it —
+        # tracked separately so callers can say "object detection only" instead
+        # of defaulting to a fake action/emotion for content with no person.
+        non_person_objects = sorted({
+            OBJECT_NAME_HY.get(name, name) for name in objects_seen if name != 'person'
+        })
+        self.state.update_objects(non_person_objects if not person_present else [])
+
+        # Only read an emotion off a frame that actually has a person in it —
+        # detect_emotion() still runs its own face search either way, but
+        # there's no point asking "what's the emotion" of an empty frame.
+        emotion = self.classifier.detect_emotion(frame) if person_present else None
         self.state.update_emotion(emotion)
         if emotion:
             frame = self._draw_unicode_text(frame, f"Էմոցիան: {emotion}", (10, 70))

@@ -14,6 +14,11 @@ class SystemState:
         # Data shared between Vision and Agent
         self.people_actions = []  # Armenian action names
         self.current_emotion = "Neutral"
+        # Non-person object class names (YOLO COCO labels) seen in the most
+        # recent frame — lets callers distinguish "no person, but an object
+        # was detected" from "nothing detected at all" instead of collapsing
+        # both into a fake/default action or emotion. See LegalVisionService.
+        self.detected_objects = []
         self.active_category = "General"
         self.file_context = ""
 
@@ -31,6 +36,10 @@ class SystemState:
     def update_emotion(self, emotion):
         with self._lock:
             self.current_emotion = emotion
+
+    def update_objects(self, objects):
+        with self._lock:
+            self.detected_objects = objects
 
     def update_category(self, category):
         with self._lock:
@@ -52,6 +61,10 @@ class SystemState:
     def get_emotion(self):
         with self._lock:
             return self.current_emotion
+
+    def get_objects(self):
+        with self._lock:
+            return self.detected_objects.copy()
 
     def get_category(self):
         with self._lock:
