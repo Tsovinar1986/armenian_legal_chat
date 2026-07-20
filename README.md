@@ -238,6 +238,62 @@ microphone permission; the first video upload is slow since it loads YOLO/MediaP
 [`notebook/frontend_preview.ipynb`](notebook/frontend_preview.ipynb) — it embeds the same
 running `localhost:5173` page in an `IFrame` once both processes above are up.
 
+## Running backend + frontend together on Windows
+
+Same two processes as above, just Windows-specific setup and commands. Use **two separate
+PowerShell windows** — one per process, both left running the whole time you're using the app.
+
+**One-time setup, in either window:**
+
+```powershell
+git clone https://github.com/Tsovinar1986/armenian_legal_chat.git
+cd armenian_legal_chat
+python -m venv .venv
+.venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+You'll also need, once:
+- [Node.js](https://nodejs.org/) (LTS) — for the frontend. Confirm with `node -v` in a new PowerShell window.
+- [Ollama for Windows](https://ollama.com/download/windows), with `ollama pull nomic-embed-text` and the `armenia-lawyer-router` model pulled/imported — same requirement as macOS/Linux, see Prerequisites above.
+- **ffmpeg on PATH** — required for the frontend's mic button (`POST /api/speech-to-text` shells out to `ffmpeg` to convert the browser's recorded audio). macOS/Linux get this via Homebrew or the `Dockerfile`; on Windows there's no equivalent, so install it manually:
+  1. Download a build from [gyan.dev's ffmpeg builds](https://www.gyan.dev/ffmpeg/builds/) (the "release essentials" zip is enough).
+  2. Extract it somewhere permanent, e.g. `C:\ffmpeg`.
+  3. Add `C:\ffmpeg\bin` to your `PATH` (Windows Settings → System → About → Advanced system settings → Environment Variables → edit `Path` under User variables → New).
+  4. Open a **new** PowerShell window (PATH changes don't apply to already-open ones) and confirm with `ffmpeg -version`.
+
+  Without this, typed chat and file upload still work — only the mic button will fail, with a clear "ffmpeg failed" error from `/api/speech-to-text` rather than a silent hang.
+
+**PowerShell window 1 — backend:**
+
+```powershell
+cd armenian_legal_chat
+.venv\Scripts\activate
+uvicorn api:app --reload --host 0.0.0.0 --port 8000
+```
+
+**PowerShell window 2 — frontend:**
+
+```powershell
+cd armenian_legal_chat\frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173 in your browser once both windows show they're up (the backend
+prints `Uvicorn running on http://0.0.0.0:8000`; the frontend prints a `Local:` URL). Same
+proxy setup as macOS/Linux — the frontend talks to `localhost:8000` through Vite, no CORS
+config needed.
+
+**Port already in use on Windows** — the `lsof`/`kill` commands earlier in this README are
+macOS/Linux-only. Windows equivalents:
+
+```powershell
+netstat -ano | findstr :8000        # find the PID using port 8000 (swap 5173 for the frontend)
+taskkill /PID <pid> /F              # stop it
+```
+
 ## Notebooks
 
 ```bash
