@@ -208,6 +208,22 @@ kill <PID>
 
 If it doesn't stop (rare), force it with `kill -9 <PID>`. Only kill a process you recognize — `lsof` also shows the command name (`Python`, `node`, etc.) so you can confirm it's safe before killing it. Re-run `lsof -nP -iTCP:8000 -sTCP:LISTEN` afterward with no output to confirm the port is free, then start `uvicorn` again on port 8000.
 
+## Run the frontend (Vite dev server against the live backend)
+
+`frontend/` is a small Vite project — a chat console that calls the real `POST /api/chat`
+on the backend above, replacing the scripted demo in `docs/legal-ui.html`. Voice and file
+upload aren't exposed over HTTP, so those buttons stay illustrative and only exist for real
+in the desktop CLI (`src/main.py`).
+
+```bash
+uvicorn api:app --reload --host 0.0.0.0 --port 8000   # backend, in one terminal
+cd frontend && npm install && npm run dev              # frontend, in another
+```
+
+Open http://localhost:5173 — Vite proxies `/api` and `/health` to `localhost:8000`
+(see `frontend/vite.config.js`), so no CORS setup is needed. The status pill in the
+console header pings `/health` every 15s and shows whether the backend is reachable.
+
 ## Notebooks
 
 ```bash

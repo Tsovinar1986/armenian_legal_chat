@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Legal UI</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Vite dev server · live backend</div>
+    <h1>Legal AI, <em>talking to the real backend</em></h1>
+    <p class="sub">
+      Typed questions here hit <code>POST /api/chat</code> on the FastAPI backend
+      (proxied by Vite to <code>localhost:8000</code>) — the same endpoint the web
+      portal in <code>api.py</code> uses. Voice and file upload aren't exposed over
+      HTTP yet (they're desktop-CLI-only in <code>src/main.py</code>), so those
+      controls stay illustrative.
+    </p>
+  </header>
+
+  <div class="console">
+    <div class="console-bar">
+      <div class="console-bar-left">
+        <span class="console-dot" id="liveDot"></span>
+        <span class="console-title">Հայկական իրավական օգնական <span class="divider">·</span> <span class="path" id="backendPath">/api/chat</span></span>
+      </div>
+      <div class="pills">
+        <span class="pill" id="backendPill">
+          <span class="dot"></span><span id="backendStatus">checking backend…</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <div class="row bot">
+        <span class="who">AI</span>
+        <div class="bubble">🤖 Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...</div>
+      </div>
+    </div>
+
+    <div class="dock">
+      <div class="dock-controls">
+        <button class="ctrl" id="btnMic" type="button" title="Voice isn't exposed over HTTP — see src/main.py"><kbd>m</kbd>🎤 Ask by voice</button>
+        <button class="ctrl" id="btnUpload" type="button" title="Upload isn't exposed over HTTP — see src/main.py"><kbd>u</kbd>📎 Upload doc / video</button>
+      </div>
+
+      <div class="composer">
+        <input type="text" id="typedInput" placeholder="Type your legal question in Armenian…" autocomplete="off" />
+        <button class="send" id="btnSend" type="button"><kbd style="margin-right:6px;">t</kbd>Send</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer-note">
+    Start the backend with <code>uvicorn api:app --reload --port 8000</code> from the repo root,
+    then run <code>npm run dev</code> here. Chat requests go to the real <code>LegalAgent</code> —
+    responses depend on Ollama/chromadb being up on that side.
+  </p>
+
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
