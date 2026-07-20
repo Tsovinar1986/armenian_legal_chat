@@ -92,14 +92,23 @@ class LegalAIController:
             return
 
         # --- VIDEO PROCESSING PIPELINE ---
+        # Headless (analyze_video_headless), not process_video — [u]pload is a
+        # terminal action and shouldn't pop open a GUI video window; that's
+        # only appropriate for the live webcam feed. Same detection pipeline
+        # either way, just no cv2.imshow.
         if file_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv')):
-            print(f"🎥 Analyzing video: {file_path}. Press 'q' to stop.")
+            print(f"🎥 Analyzing video: {file_path}...")
             try:
-                detected_actions = self.vision.process_video(file_path)
-                if detected_actions:
-                    print(f"\n✅ Analysis complete. Detected unique legal actions: {detected_actions}")
+                result = self.vision.analyze_video_headless(file_path)
+                actions = result["actions"]
+                if actions:
+                    print(f"\n✅ Analysis complete ({result['frames_analyzed']} frames sampled). "
+                          f"Detected unique legal actions: {actions}")
                 else:
-                    print("\n✅ Analysis complete. No legal actions were detected in the uploaded video.")
+                    print(f"\n✅ Analysis complete ({result['frames_analyzed']} frames sampled). "
+                          f"No legal actions were detected in the uploaded video.")
+                if result["emotion"]:
+                    print(f"   Emotion: {result['emotion']}")
             except Exception as ex:
                 print(f"⚠️ Video analysis failed: {ex}")
             return
