@@ -164,6 +164,12 @@ From the project root so `src` imports resolve:
 python src/main.py
 ```
 
+**To always start clean**, use `./scripts/run_cli.sh` instead — it kills any
+leftover `src/main.py` process first (e.g. one left suspended with `Ctrl-Z`
+instead of quitting with `q`), which otherwise can make keyboard input meant
+for the new process land on the stale one instead — the most common symptom
+is `[u]pload` reporting "File not found" for a path that genuinely exists.
+
 When prompted, choose a camera source:
 - Enter `0` to use the MacBook or notebook built-in webcam.
 - Enter a network camera URL such as `http://192.168.1.10:8080/video` or `rtsp://<ip>:554/stream` to use a mobile/IP stream.
