@@ -12,8 +12,10 @@ openpyxl>=3.1
 
 # --- Computer vision (src/services/vision.py) ---
 opencv-python>=4.8
-# 0.10.31+ PyPI wheels omit mediapipe.solutions (Tasks-only); this project uses Pose solution API.
-mediapipe>=0.10.21,<0.10.31
+# 0.10.30+ PyPI wheels (macOS arm64 in particular) ship as a Tasks-only build and
+# omit mediapipe.solutions entirely; this project uses the legacy Pose solution API,
+# so stay below that cutoff.
+mediapipe>=0.10.21,<0.10.30
 ultralytics>=8.0
 Pillow>=10.0
 
