@@ -28,17 +28,37 @@ def _flush_stdin():
     pressing 'u' arrives as "u/real/path", which then fails the file-exists
     check even though the real path is correct. Call this immediately before
     any input() prompt that follows a keyboard-triggered action.
+
+    Windows note: pynput's low-level keyboard hook doesn't suppress the
+    keystroke either, so the same leak happens there. The correct Windows
+    equivalent of termios.tcflush is FlushConsoleInputBuffer (a Win32 API
+    call, via ctypes) — it clears the console's raw input buffer directly,
+    which is where a leaked keystroke actually lands. msvcrt.kbhit()/getch()
+    read from that same buffer one key at a time and were tried first here,
+    but can race with the C runtime's own line-buffering layer already having
+    claimed the character before the loop gets to poll for it; going straight
+    to the Win32 call is more reliable, so it's the primary path now.
     """
+    if platform.system() == "Windows":
+        try:
+            import ctypes
+            STD_INPUT_HANDLE = -10
+            handle = ctypes.windll.kernel32.GetStdHandle(STD_INPUT_HANDLE)
+            ctypes.windll.kernel32.FlushConsoleInputBuffer(handle)
+        except Exception:
+            try:
+                import msvcrt
+                while msvcrt.kbhit():
+                    msvcrt.getch()
+            except ImportError:
+                pass
+        return
+
     try:
         import termios
         termios.tcflush(sys.stdin, termios.TCIFLUSH)
     except Exception:
-        try:
-            import msvcrt
-            while msvcrt.kbhit():
-                msvcrt.getch()
-        except ImportError:
-            pass
+        pass
 
 
 keyboard = None
