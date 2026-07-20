@@ -18,7 +18,7 @@ from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
 import stripe
-from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -1209,8 +1209,18 @@ async def upload_file(file: UploadFile = File(...)):
             os.remove(tmp_path)
 
 
+# Short app-wide language code -> Google Speech Recognition locale. Any code
+# not listed here falls back to hy-AM, same convention as _t()/get_crisis_response
+# falling back to English for unlisted codes elsewhere in the app.
+STT_LANGUAGE_MAP = {
+    "hy": "hy-AM",
+    "en": "en-US",
+    "ru": "ru-RU",
+}
+
+
 @app.post("/api/speech-to-text")
-async def speech_to_text(file: UploadFile = File(...)):
+async def speech_to_text(file: UploadFile = File(...), language: str = Form("hy")):
     """Browser equivalent of the desktop CLI's mic input (src/services/voice.py
     listen_once): the browser records with MediaRecorder (webm/opus, ogg, or
     similar — never raw WAV), so this converts to a 16kHz mono WAV via ffmpeg
@@ -1224,6 +1234,7 @@ async def speech_to_text(file: UploadFile = File(...)):
             src_path = src_tmp.name
 
         wav_path = src_path + ".wav"
+        stt_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
 
         def convert_and_transcribe():
             proc = subprocess.run(
@@ -1239,8 +1250,8 @@ async def speech_to_text(file: UploadFile = File(...)):
             recognizer = sr.Recognizer()
             with sr.AudioFile(wav_path) as source:
                 audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio, language="hy-AM")
-            return sanitize_transcript(text)
+            text = recognizer.recognize_google(audio, language=stt_locale)
+            return sanitize_transcript(text, language=language)
 
         text = await run_in_threadpool(convert_and_transcribe)
         if not text:

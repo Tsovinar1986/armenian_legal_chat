@@ -19,6 +19,8 @@
       and uploads go to <code>POST /api/upload</code> — all real calls against the
       FastAPI backend (proxied by Vite to <code>localhost:8000</code>), the same one
       <code>api.py</code>'s own portal UI and the desktop CLI in <code>src/main.py</code> use.
+      The language buttons below switch both the chat response language and the mic's
+      speech-recognition locale.
     </p>
   </header>
 
@@ -38,11 +40,18 @@
     <div class="transcript" id="transcript">
       <div class="row bot">
         <span class="who">AI</span>
-        <div class="bubble">🤖 Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...</div>
+        <div class="bubble" id="greetingBubble">🤖 Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...</div>
       </div>
     </div>
 
     <div class="dock">
+      <div class="lang-row" id="langRow" role="group" aria-label="Response language">
+        <span class="lang-label">Language</span>
+        <button class="lang-btn active" data-lang="hy" type="button">🇦🇲 Հայերեն</button>
+        <button class="lang-btn" data-lang="en" type="button">🇬🇧 English</button>
+        <button class="lang-btn" data-lang="ru" type="button">🇷🇺 Русский</button>
+      </div>
+
       <div class="dock-controls">
         <button class="ctrl" id="btnMic" type="button" title="Record and transcribe via /api/speech-to-text"><kbd>m</kbd>🎤 Ask by voice</button>
         <button class="ctrl" id="btnUpload" type="button" title="Send to /api/upload"><kbd>u</kbd>📎 Upload doc / video</button>

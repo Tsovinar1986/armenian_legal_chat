@@ -12,13 +12,30 @@ const fileInput = document.getElementById("fileInput");
 const consoleDot = document.getElementById("liveDot");
 const backendPill = document.getElementById("backendPill");
 const backendStatus = document.getElementById("backendStatus");
+const langButtons = document.querySelectorAll(".lang-btn");
+const greetingBubble = document.getElementById("greetingBubble");
 
 const MAX_RECORDING_MS = 12000;
+
+// Matches api.py's STT_LANGUAGE_MAP / src/agents/legal_crew.py's LANGUAGE_NAMES —
+// the same three short codes drive both the chat response language and the
+// mic's speech-recognition locale.
+const PLACEHOLDERS = {
+  hy: "Տվեք ձեր իրավական հարցը հայերեն…",
+  en: "Type your legal question in English…",
+  ru: "Введите ваш юридический вопрос на русском…",
+};
+const GREETINGS = {
+  hy: "🤖 Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...",
+  en: "🤖 How can I help you today...",
+  ru: "🤖 Чем я могу вам помочь сегодня...",
+};
 
 let sessionId = null;
 let busy = false;
 let mediaRecorder = null;
 let recordingTimer = null;
+let currentLanguage = "hy";
 
 function scrollToEnd() {
   transcript.scrollTop = transcript.scrollHeight;
@@ -76,6 +93,25 @@ async function checkBackend() {
   }
 }
 
+function setLanguage(lang) {
+  if (!PLACEHOLDERS[lang] || lang === currentLanguage) return;
+  currentLanguage = lang;
+  langButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.lang === lang));
+  typedInput.placeholder = PLACEHOLDERS[lang];
+  // Only the static opening greeting follows the language switch in place —
+  // real exchanges already in the transcript stay exactly as they were sent
+  // and answered, and switching languages doesn't spam the chat with a
+  // separate notice for every click.
+  if (greetingBubble) greetingBubble.textContent = GREETINGS[lang];
+}
+
+langButtons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    if (busy) return;
+    setLanguage(btn.dataset.lang);
+  });
+});
+
 async function sendMessage(message) {
   addRow("user", "You", message);
   setComposerEnabled(false);
@@ -85,7 +121,7 @@ async function sendMessage(message) {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message, session_id: sessionId, language: "hy" }),
+      body: JSON.stringify({ message, session_id: sessionId, language: currentLanguage }),
     });
 
     if (!res.ok) {
@@ -190,6 +226,7 @@ async function transcribeAndSend(blob) {
     const form = new FormData();
     const ext = (blob.type.split("/")[1] || "webm").split(";")[0];
     form.append("file", blob, `mic-input.${ext}`);
+    form.append("language", currentLanguage);
 
     const res = await fetch("/api/speech-to-text", { method: "POST", body: form });
     const data = await res.json();
@@ -273,5 +310,6 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "u") btnUpload.click();
 });
 
+typedInput.placeholder = PLACEHOLDERS[currentLanguage];
 checkBackend();
 setInterval(checkBackend, 15000);

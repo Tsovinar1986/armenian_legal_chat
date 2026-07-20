@@ -11,7 +11,7 @@ from src.guardrails import GuardrailManager
 # Fixed template strings for the deterministic classifier-match/vector-match
 # responses (Steps 2-3 in get_advice, plus the Step 0c/1 short messages) —
 # these aren't LLM-generated, so they can't "just respond in the requested
-# language" the way the crew-drafted answer does. hy/en have real
+# language" the way the crew-drafted answer does. hy/en/ru have real
 # translations; any other requested code falls back to English, same
 # convention as get_crisis_response in crisis_detection.py.
 _TEMPLATE_TEXT = {
@@ -38,6 +38,7 @@ _TEMPLATE_TEXT = {
         "datalex_link_label": "🌐 DataLex հղումը",
         "case_content_example_label": "📄 Գործի բովանդակության օրինակ",
         "vector_match_footer": "Մանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։",
+        "no_local_precedents": "Համապատասխան տեղական իրավական նախադեպեր չգտնվեցին։ Խնդրում ենք համոզվել, որ ֆայլերը ճիշտ են ներբեռնված համակարգ։",
     },
     "en": {
         "guardrail_blocked": "This request can't be processed due to inappropriate or invalid content. Please rephrase your question.",
@@ -62,6 +63,32 @@ _TEMPLATE_TEXT = {
         "datalex_link_label": "🌐 DataLex link",
         "case_content_example_label": "📄 Case content excerpt",
         "vector_match_footer": "Open the link for details, or refine your search.",
+        "no_local_precedents": "No relevant local legal precedents were found. Please make sure the files are correctly uploaded to the system.",
+    },
+    "ru": {
+        "guardrail_blocked": "Этот запрос не может быть обработан из-за неприемлемого или недопустимого содержания. Пожалуйста, переформулируйте вопрос.",
+        "clarify_short_query": "Пожалуйста, опишите Вашу юридическую проблему немного подробнее, чтобы я мог найти точные прецеденты.",
+        "not_specified": "Не указано",
+        "classifier_match_header": "🎯 [НАЙДЕНО СОВПАДЕНИЕ КЛАССИФИКАТОРА]",
+        "classification_label": "Классификация",
+        "similar_case_label": "Похожее дело",
+        "link_label": "Ссылка",
+        "recommended_lawyer_label": "Рекомендуемый адвокат",
+        "top_lawyer_header": "🏆 Самый успешный адвокат по похожим делам",
+        "approved_cases_label": "Выигранные дела",
+        "of_total_similar": "из {total} похожих дел",
+        "case_history_label": "📄 История дела / пример содержания",
+        "open_link_footer": "Вы также можете открыть ссылку, чтобы прочитать дело полностью.",
+        "similar_cases_header": "📚 Похожие дела (полезные примеры).",
+        "lawyer_label": "Адвокат",
+        "approved_marker": " ✅ Выиграно",
+        "vector_match_header": "✨ [Найдено совпадение в базе прецедентов]",
+        "vector_match_intro": "Я нашёл в базе данных системы историческое дело, соответствующее этому юридическому вопросу.",
+        "case_number_label": "🔢 Номер судебного дела",
+        "datalex_link_label": "🌐 Ссылка DataLex",
+        "case_content_example_label": "📄 Пример содержания дела",
+        "vector_match_footer": "Откройте ссылку для подробностей или уточните поиск.",
+        "no_local_precedents": "Соответствующие местные юридические прецеденты не найдены. Пожалуйста, убедитесь, что файлы правильно загружены в систему.",
     },
 }
 
@@ -354,7 +381,7 @@ class LegalAgent:
                     cases_context += f"   Verdict Summary: {verdict}\n"
 
             if not context:
-                return "Համապատասխան տեղական իրավական նախադեպեր չգտնվեցին։ Խնդրում ենք համոզվել, որ ֆայլերը ճիշտ են ներբեռնված համակարգ։"
+                return _t('no_local_precedents', language)
 
             # If LLM is available, use a researcher+writer crew to generate a proper response
             if self.llm:

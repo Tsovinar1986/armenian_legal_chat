@@ -8,11 +8,18 @@ import time
 import os
 
 
-def sanitize_transcript(text: str) -> str:
-    """Drop empty/near-empty or non-Armenian junk that recognize_google
-    occasionally returns for silence or noise. Shared by VoiceService (mic
-    loop) and api.py's /api/speech-to-text (browser-recorded audio) so both
-    entry points filter the same way."""
+def sanitize_transcript(text: str, language: str = "hy") -> str:
+    """Drop empty/near-empty or junk that recognize_google occasionally
+    returns for silence or noise. Shared by VoiceService (mic loop) and
+    api.py's /api/speech-to-text (browser-recorded audio) so both entry
+    points filter the same way.
+
+    The token-repetition checks are language-agnostic (\\w already matches
+    Armenian/Cyrillic/Latin letters). The "require an Armenian letter unless
+    the transcript is long" check only makes sense when hy-AM is actually
+    the language being recognized — applying it to en/ru transcripts would
+    silently drop every short, valid "Hello"/"Привет"-style utterance.
+    """
     cleaned = text.strip()
     if not cleaned:
         return ""
@@ -27,7 +34,7 @@ def sanitize_transcript(text: str) -> str:
         if len(set(tokens)) == 2 and len(tokens) == 3:
             return ""
 
-    if not re.search(r'[ա-ֆԱ-Ֆ]', cleaned):
+    if language == "hy" and not re.search(r'[ա-ֆԱ-Ֆ]', cleaned):
         if len(cleaned) < 20:
             return ""
 

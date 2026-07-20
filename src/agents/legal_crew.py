@@ -32,6 +32,7 @@ from crewai import Agent, Crew, LLM, Process, Task
 LANGUAGE_NAMES = {
     "hy": "Armenian",
     "en": "English",
+    "ru": "Russian",
 }
 
 

@@ -24,6 +24,9 @@ _CRISIS_KEYWORDS = [
     # English
     "suicide", "suicidal", "kill myself", "want to die", "end my life",
     "self harm", "self-harm", "hurt myself", "no reason to live",
+    # Russian
+    "самоубийство", "суицид", "покончить с собой", "хочу умереть",
+    "не хочу жить", "убить себя", "причинить себе вред", "нет смысла жить",
 ]
 
 
@@ -65,13 +68,29 @@ CRISIS_RESPONSE_EN = (
     "psychological help."
 )
 
-# Keyed by IANA-ish short language code. Only hy/en are actually translated —
+CRISIS_RESPONSE_RU = (
+    "⚠️ В Вашем сообщении есть слова, которые могут указывать на тяжёлый эмоциональный "
+    "кризис или риск причинения себе вреда.\n\n"
+    "Если Вы находитесь в непосредственной опасности или думаете о самоубийстве, "
+    "пожалуйста, немедленно обратитесь за помощью:\n"
+    "🚨 Единая служба экстренной помощи Армении: 911\n"
+    "👮 Полиция: 102   🚑 Скорая помощь: 103\n\n"
+    "Если Вы находитесь за пределами Армении, пожалуйста, обратитесь по местному номеру "
+    "экстренной помощи.\n\n"
+    "Пожалуйста, также немедленно свяжитесь с человеком, которому доверяете (член семьи, "
+    "друг), или обратитесь к квалифицированному психологу/терапевту.\n\n"
+    "Эта система — инструмент для юридической консультации и НЕ МОЖЕТ заменить экстренную "
+    "медицинскую или психологическую помощь."
+)
+
+# Keyed by IANA-ish short language code. Only hy/en/ru are actually translated —
 # add more entries here as real translations become available. Any other
 # requested code falls back to English in get_crisis_response below, since
 # that reaches more people than defaulting to Armenian-only.
 CRISIS_RESPONSES = {
     "hy": CRISIS_RESPONSE_HY,
     "en": CRISIS_RESPONSE_EN,
+    "ru": CRISIS_RESPONSE_RU,
 }
 
 DEFAULT_CRISIS_LANGUAGE = "hy"
