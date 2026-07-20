@@ -210,10 +210,12 @@ If it doesn't stop (rare), force it with `kill -9 <PID>`. Only kill a process yo
 
 ## Run the frontend (Vite dev server against the live backend)
 
-`frontend/` is a small Vite project — a chat console that calls the real `POST /api/chat`
-on the backend above, replacing the scripted demo in `docs/legal-ui.html`. Voice and file
-upload aren't exposed over HTTP, so those buttons stay illustrative and only exist for real
-in the desktop CLI (`src/main.py`).
+`frontend/` is a small Vite project — a chat console wired to the real backend above,
+replacing the scripted demo in `docs/legal-ui.html`. All three controls make real requests:
+typed questions hit `POST /api/chat`, the mic button records with `MediaRecorder` and
+transcribes via `POST /api/speech-to-text` (ffmpeg + `speech_recognition`, `hy-AM`), and
+uploads go to `POST /api/upload` (documents are embedded via `IngestionService`, videos run
+through `LegalVisionService.analyze_video_headless` — YOLO + MediaPipe, no GUI).
 
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000   # backend, in one terminal
@@ -223,6 +225,12 @@ cd frontend && npm install && npm run dev              # frontend, in another
 Open http://localhost:5173 — Vite proxies `/api` and `/health` to `localhost:8000`
 (see `frontend/vite.config.js`), so no CORS setup is needed. The status pill in the
 console header pings `/health` every 15s and shows whether the backend is reachable.
+The mic needs `ffmpeg` on the backend's `PATH` (already in `Dockerfile`) and browser
+microphone permission; the first video upload is slow since it loads YOLO/MediaPipe.
+
+**To preview it inside Jupyter instead of a browser tab**, open
+[`notebook/frontend_preview.ipynb`](notebook/frontend_preview.ipynb) — it embeds the same
+running `localhost:5173` page in an `IFrame` once both processes above are up.
 
 ## Notebooks
 

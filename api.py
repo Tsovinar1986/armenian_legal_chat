@@ -9,6 +9,8 @@
 # Run the CLI with: python src/main.py
 import json
 import os
+import subprocess
+import tempfile
 import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -16,7 +18,7 @@ from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
 import stripe
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -56,6 +58,20 @@ room_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
 _legal_agent = None
 _legal_agent_error: str | None = None
 _mental_health_qa_classifier = None
+_vision_service = None
+
+
+def get_vision_service():
+    """Lazily build the LegalVisionService (loads YOLO + MediaPipe on first
+    use), reused across /api/upload video requests. Its own SystemState is
+    private to this instance — see analyze_video_headless's docstring for
+    why per-request state would be wrong here."""
+    global _vision_service
+    if _vision_service is None:
+        from src.core.state import SystemState
+        from src.services.vision import LegalVisionService
+        _vision_service = LegalVisionService(SystemState())
+    return _vision_service
 
 
 def get_mental_health_qa_classifier():
@@ -1149,6 +1165,98 @@ async def chat(request: ChatMessageRequest):
 async def get_chat_history(session_id: str):
     messages = await run_in_threadpool(portal_store.get_chat_messages, session_id, "legal")
     return {"session_id": session_id, "messages": messages}
+
+
+DOCUMENT_EXTENSIONS = {".txt", ".xlsx"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
+
+
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Browser equivalent of the desktop CLI's [u]pload (src/main.py
+    handle_upload): documents get embedded into the case vector store,
+    videos get run through the same YOLO+MediaPipe action/emotion pipeline
+    (headless — see LegalVisionService.analyze_video_headless)."""
+    suffix = os.path.splitext(file.filename or "")[1].lower()
+    if suffix not in DOCUMENT_EXTENSIONS and suffix not in VIDEO_EXTENSIONS:
+        return {
+            "success": False,
+            "message": f"Unsupported file type '{suffix or '(none)'}'. "
+                       f"Use one of: {', '.join(sorted(DOCUMENT_EXTENSIONS | VIDEO_EXTENSIONS))}.",
+        }
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(await file.read())
+            tmp_path = tmp.name
+
+        if suffix in DOCUMENT_EXTENSIONS:
+            from src.services.ingestion import IngestionService
+
+            agent = await run_in_threadpool(get_legal_agent)
+            ingestor = IngestionService(agent.repo.db)
+            status = await run_in_threadpool(ingestor.process_file, tmp_path)
+            return {"success": True, "kind": "document", "message": status}
+
+        vision_service = get_vision_service()
+        result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12)
+        return {"success": True, "kind": "video", **result}
+    except Exception as exc:
+        return {"success": False, "message": f"Could not process '{file.filename}': {exc}"}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+@app.post("/api/speech-to-text")
+async def speech_to_text(file: UploadFile = File(...)):
+    """Browser equivalent of the desktop CLI's mic input (src/services/voice.py
+    listen_once): the browser records with MediaRecorder (webm/opus, ogg, or
+    similar — never raw WAV), so this converts to a 16kHz mono WAV via ffmpeg
+    before handing it to the same recognize_google() call the CLI uses."""
+    src_path = None
+    wav_path = None
+    try:
+        suffix = os.path.splitext(file.filename or "")[1] or ".webm"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as src_tmp:
+            src_tmp.write(await file.read())
+            src_path = src_tmp.name
+
+        wav_path = src_path + ".wav"
+
+        def convert_and_transcribe():
+            proc = subprocess.run(
+                ["ffmpeg", "-y", "-i", src_path, "-ar", "16000", "-ac", "1", wav_path],
+                capture_output=True, text=True, timeout=30,
+            )
+            if proc.returncode != 0:
+                raise RuntimeError(f"ffmpeg failed: {proc.stderr[-500:]}")
+
+            import speech_recognition as sr
+            from src.services.voice import sanitize_transcript
+
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(wav_path) as source:
+                audio = recognizer.record(source)
+            text = recognizer.recognize_google(audio, language="hy-AM")
+            return sanitize_transcript(text)
+
+        text = await run_in_threadpool(convert_and_transcribe)
+        if not text:
+            return {"success": False, "message": "Didn't catch valid speech — please try again."}
+        return {"success": True, "text": text}
+    except Exception as exc:
+        import speech_recognition as sr
+        if isinstance(exc, sr.UnknownValueError):
+            return {"success": False, "message": "Didn't catch valid speech — please try again."}
+        if isinstance(exc, sr.RequestError):
+            return {"success": False, "message": f"Speech recognition service error: {exc}"}
+        return {"success": False, "message": f"Speech-to-text failed: {exc}"}
+    finally:
+        for p in (src_path, wav_path):
+            if p and os.path.exists(p):
+                os.remove(p)
 
 
 @app.post("/api/therapist-chat")

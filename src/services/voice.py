@@ -7,6 +7,33 @@ import threading
 import time
 import os
 
+
+def sanitize_transcript(text: str) -> str:
+    """Drop empty/near-empty or non-Armenian junk that recognize_google
+    occasionally returns for silence or noise. Shared by VoiceService (mic
+    loop) and api.py's /api/speech-to-text (browser-recorded audio) so both
+    entry points filter the same way."""
+    cleaned = text.strip()
+    if not cleaned:
+        return ""
+
+    lower = cleaned.lower()
+    tokens = re.findall(r"[\wЀ-ӿ]+", lower)
+
+    if len(tokens) >= 3 and len(set(tokens)) == 1 and len(tokens[0]) <= 3:
+        return ""
+
+    if len(tokens) >= 3 and all(len(t) <= 3 for t in tokens):
+        if len(set(tokens)) == 2 and len(tokens) == 3:
+            return ""
+
+    if not re.search(r'[ա-ֆԱ-Ֆ]', cleaned):
+        if len(cleaned) < 20:
+            return ""
+
+    return cleaned
+
+
 class VoiceService:
     def __init__(self, state):
         self.state = state
@@ -78,25 +105,7 @@ class VoiceService:
                     pass
 
     def _sanitize_transcript(self, text: str) -> str:
-        cleaned = text.strip()
-        if not cleaned:
-            return ""
-
-        lower = cleaned.lower()
-        tokens = re.findall(r"[\w\u0400-\u04FF]+", lower)
-
-        if len(tokens) >= 3 and len(set(tokens)) == 1 and len(tokens[0]) <= 3:
-            return ""
-
-        if len(tokens) >= 3 and all(len(t) <= 3 for t in tokens):
-            if len(set(tokens)) == 2 and len(tokens) == 3:
-                return ""
-
-        if not re.search(r'[ա-ֆԱ-Ֆ]', cleaned):
-            if len(cleaned) < 20:
-                return ""
-
-        return cleaned
+        return sanitize_transcript(text)
 
     def listen_once(self) -> str:
         """Manual one-time listen."""

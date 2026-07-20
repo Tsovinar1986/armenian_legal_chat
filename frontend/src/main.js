@@ -8,12 +8,17 @@ const typedInput = document.getElementById("typedInput");
 const btnSend = document.getElementById("btnSend");
 const btnMic = document.getElementById("btnMic");
 const btnUpload = document.getElementById("btnUpload");
+const fileInput = document.getElementById("fileInput");
 const consoleDot = document.getElementById("liveDot");
 const backendPill = document.getElementById("backendPill");
 const backendStatus = document.getElementById("backendStatus");
 
+const MAX_RECORDING_MS = 12000;
+
 let sessionId = null;
 let busy = false;
+let mediaRecorder = null;
+let recordingTimer = null;
 
 function scrollToEnd() {
   transcript.scrollTop = transcript.scrollHeight;
@@ -125,22 +130,140 @@ typedInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") submitTyped();
 });
 
+// ---------- Mic: record with MediaRecorder, transcribe via /api/speech-to-text ----------
+
+function pickRecorderMime() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  return candidates.find((t) => window.MediaRecorder && MediaRecorder.isTypeSupported(t)) || "";
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    addRow("system", null, "🎙️ This browser doesn't support in-page audio recording.", { warn: true });
+    return;
+  }
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (err) {
+    addRow("system", null, `🎙️ Microphone permission denied (${err.message}).`, { warn: true });
+    return;
+  }
+
+  const mimeType = pickRecorderMime();
+  mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+  const chunks = [];
+
+  mediaRecorder.addEventListener("dataavailable", (e) => {
+    if (e.data.size > 0) chunks.push(e.data);
+  });
+
+  mediaRecorder.addEventListener("stop", () => {
+    stream.getTracks().forEach((t) => t.stop());
+    clearTimeout(recordingTimer);
+    btnMic.classList.remove("active");
+    btnMic.innerHTML = '<kbd>m</kbd>🎤 Ask by voice';
+    const blob = new Blob(chunks, { type: mediaRecorder.mimeType || "audio/webm" });
+    mediaRecorder = null;
+    transcribeAndSend(blob);
+  });
+
+  mediaRecorder.start();
+  btnMic.classList.add("active");
+  btnMic.innerHTML = '<kbd>m</kbd>⏺ Recording… click to stop';
+  addRow("system", null, "🎤 Listening… speak now");
+  recordingTimer = setTimeout(() => stopRecording(), MAX_RECORDING_MS);
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+}
+
+async function transcribeAndSend(blob) {
+  setComposerEnabled(false);
+  const working = addRow("system", null, "📝 Transcribing…");
+
+  try {
+    const form = new FormData();
+    const ext = (blob.type.split("/")[1] || "webm").split(";")[0];
+    form.append("file", blob, `mic-input.${ext}`);
+
+    const res = await fetch("/api/speech-to-text", { method: "POST", body: form });
+    const data = await res.json();
+    working.row.remove();
+
+    if (!res.ok || data.success === false) {
+      addRow("system", null, data.message || `HTTP ${res.status}`, { warn: true });
+      setComposerEnabled(true);
+      return;
+    }
+
+    setComposerEnabled(true);
+    sendMessage(data.text);
+  } catch (err) {
+    working.row.remove();
+    addRow("system", null, `⚠️ Speech-to-text request failed: ${err.message}`, { warn: true });
+    setComposerEnabled(true);
+  }
+}
+
 btnMic.addEventListener("click", () => {
-  addRow(
-    "system",
-    null,
-    "🎙️ Voice input isn't exposed over HTTP — it only runs in the desktop CLI (src/main.py, press [m]/[v] there).",
-    { warn: true }
-  );
+  if (busy) return;
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    stopRecording();
+  } else {
+    startRecording();
+  }
 });
 
+// ---------- Upload: send file straight to /api/upload ----------
+
 btnUpload.addEventListener("click", () => {
-  addRow(
-    "system",
-    null,
-    "📎 Upload isn't exposed over HTTP — it only runs in the desktop CLI (src/main.py, press [u] there).",
-    { warn: true }
+  if (busy) return;
+  fileInput.click();
+});
+
+fileInput.addEventListener("change", async () => {
+  const f = fileInput.files && fileInput.files[0];
+  fileInput.value = "";
+  if (!f) return;
+
+  const isVideo = /\.(mp4|mov|avi|mkv)$/i.test(f.name);
+  setComposerEnabled(false);
+  const working = addRow(
+    "system", null,
+    isVideo
+      ? `🎥 Analyzing ${f.name}… (loads YOLO/MediaPipe on first upload, can take a while)`
+      : `📄 Processing ${f.name}…`
   );
+
+  try {
+    const form = new FormData();
+    form.append("file", f);
+    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const data = await res.json();
+    working.row.remove();
+
+    if (!res.ok || data.success === false) {
+      addRow("system", null, data.message || `HTTP ${res.status}`, { warn: true });
+    } else if (data.kind === "video") {
+      const actions = data.actions && data.actions.length ? data.actions.join(", ") : "none detected";
+      addRow(
+        "system", null,
+        `✅ Analyzed ${data.frames_analyzed} sampled frame(s). Actions: ${actions}. Emotion: ${data.emotion || "n/a"}.`
+      );
+    } else {
+      addRow("system", null, `✅ ${data.message}`);
+    }
+  } catch (err) {
+    working.row.remove();
+    addRow("system", null, `⚠️ Upload failed: ${err.message}`, { warn: true });
+  } finally {
+    setComposerEnabled(true);
+  }
 });
 
 document.addEventListener("keydown", (e) => {

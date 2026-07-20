@@ -85,6 +85,10 @@ uvicorn>=0.24
 fastapi>=0.100
 pydantic>=2.0
 websockets>=12.0
+# Required by FastAPI's UploadFile (POST /api/upload, /api/speech-to-text) to
+# parse multipart/form-data — FastAPI only raises a runtime error asking for
+# it if it's missing, so it's pinned explicitly here instead.
+python-multipart>=0.0.9
 # Payments (Apple Pay / Google Pay / card) for lawyer & therapist consultations.
 # Requires STRIPE_SECRET_KEY (and STRIPE_WEBHOOK_SECRET for the webhook) env vars —
 # see README.md "Payments" section. Apple Pay/Google Pay require domain

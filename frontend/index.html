@@ -14,11 +14,11 @@
     <div class="eyebrow">Vite dev server · live backend</div>
     <h1>Legal AI, <em>talking to the real backend</em></h1>
     <p class="sub">
-      Typed questions here hit <code>POST /api/chat</code> on the FastAPI backend
-      (proxied by Vite to <code>localhost:8000</code>) — the same endpoint the web
-      portal in <code>api.py</code> uses. Voice and file upload aren't exposed over
-      HTTP yet (they're desktop-CLI-only in <code>src/main.py</code>), so those
-      controls stay illustrative.
+      Typed questions hit <code>POST /api/chat</code>, the mic button records with
+      <code>MediaRecorder</code> and transcribes via <code>POST /api/speech-to-text</code>,
+      and uploads go to <code>POST /api/upload</code> — all real calls against the
+      FastAPI backend (proxied by Vite to <code>localhost:8000</code>), the same one
+      <code>api.py</code>'s own portal UI and the desktop CLI in <code>src/main.py</code> use.
     </p>
   </header>
 
@@ -44,8 +44,9 @@
 
     <div class="dock">
       <div class="dock-controls">
-        <button class="ctrl" id="btnMic" type="button" title="Voice isn't exposed over HTTP — see src/main.py"><kbd>m</kbd>🎤 Ask by voice</button>
-        <button class="ctrl" id="btnUpload" type="button" title="Upload isn't exposed over HTTP — see src/main.py"><kbd>u</kbd>📎 Upload doc / video</button>
+        <button class="ctrl" id="btnMic" type="button" title="Record and transcribe via /api/speech-to-text"><kbd>m</kbd>🎤 Ask by voice</button>
+        <button class="ctrl" id="btnUpload" type="button" title="Send to /api/upload"><kbd>u</kbd>📎 Upload doc / video</button>
+        <input type="file" id="fileInput" accept=".txt,.xlsx,.mp4,.mov,.avi,.mkv" hidden />
       </div>
 
       <div class="composer">
@@ -57,8 +58,9 @@
 
   <p class="footer-note">
     Start the backend with <code>uvicorn api:app --reload --port 8000</code> from the repo root,
-    then run <code>npm run dev</code> here. Chat requests go to the real <code>LegalAgent</code> —
-    responses depend on Ollama/chromadb being up on that side.
+    then run <code>npm run dev</code> here. Chat depends on Ollama/chromadb; the mic needs
+    <code>ffmpeg</code> on the backend's PATH and browser microphone permission; video upload
+    loads YOLO/MediaPipe on first use, so the first one is slower than the rest.
   </p>
 
 </div>

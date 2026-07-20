@@ -221,6 +221,12 @@ h1 em{ font-style:italic; color:var(--muted); }
   padding:1px 5px;
   background:var(--bg);
 }
+.ctrl.active{
+  color:var(--warn-ink);
+  border-color:var(--warn-border);
+  background:var(--warn-bg);
+}
+.ctrl.active kbd{ color:var(--warn-ink); border-color:var(--warn-border); }
 
 .composer{ display:flex; gap:8px; align-items:center; }
 .composer input[type="text"]{

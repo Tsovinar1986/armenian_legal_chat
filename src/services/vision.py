@@ -111,6 +111,57 @@ class LegalVisionService:
         cv2.destroyAllWindows()
         return list(unique_actions)
 
+    def analyze_video_headless(self, video_path, max_frames=12):
+        """Same detection pipeline as process_video, but for server use: no
+        cv2.imshow/waitKey (those need a display and would hang/crash a
+        request handler), and it samples up to max_frames evenly across the
+        video instead of every frame, since a full-resolution upload run
+        frame-by-frame inside an HTTP request would be far too slow.
+        Deliberately doesn't touch self.state — that's shared across every
+        request this process handles, and mixing concurrent uploads into one
+        SystemState would corrupt all of them."""
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            raise ValueError(f"Cannot open video file: {video_path}")
+
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
+        sample_indices = (
+            {round(i * total_frames / max_frames) for i in range(max_frames)}
+            if total_frames > max_frames else None
+        )
+
+        unique_actions = set()
+        last_emotion = None
+        frames_analyzed = 0
+        frame_idx = 0
+        try:
+            while cap.isOpened():
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                if sample_indices is None or frame_idx in sample_indices:
+                    results, objects_seen = self.classifier.detect_objects(frame)
+                    for r in results:
+                        for box in r.boxes:
+                            if self.classifier.yolo.names[int(box.cls[0])] == 'person':
+                                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                                crop = frame[y1:y2, x1:x2]
+                                if crop.size == 0:
+                                    continue
+                                unique_actions.update(self.classifier.classify_actions(crop, objects_seen))
+                    last_emotion = self.classifier.detect_emotion(frame) or last_emotion
+                    frames_analyzed += 1
+                frame_idx += 1
+        finally:
+            cap.release()
+
+        return {
+            "actions": sorted(unique_actions),
+            "emotion": last_emotion,
+            "frames_analyzed": frames_analyzed,
+        }
+
     def process_frame(self, frame):
         results, objects_seen = self.classifier.detect_objects(frame)
         actions_in_frame = []
