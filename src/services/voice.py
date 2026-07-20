@@ -58,7 +58,14 @@ class VoiceService:
         self.list_available_microphones()
 
     def list_available_microphones(self):
-        """List all microphones and let user choose."""
+        """Ask yes/no whether to use the default microphone; only list
+        devices and ask which one if the answer is no."""
+        use_default = input("\n🎤 Use the default microphone? (y/n): ").strip().lower() == 'y'
+        if use_default:
+            self.microphone = sr.Microphone()
+            print("✅ Using default microphone")
+            return
+
         print("\n🎤 Available Microphones:")
         mic_list = sr.Microphone.list_microphone_names()
 
