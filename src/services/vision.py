@@ -92,16 +92,11 @@ class LegalVisionService:
                 "Detected: " + ", ".join(sorted(unique_actions)) + f" | Էմոցիան: {current_emotion}"
                 if unique_actions else f"Detecting actions... | Էմոցիան: {current_emotion}"
             )
-            cv2.putText(
-                processed_frame,
-                status_text,
-                (10, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 0),
-                2,
-                cv2.LINE_AA,
-            )
+            # cv2.putText's built-in Hershey font is ASCII/Latin-only — Armenian
+            # characters in status_text rendered as "?????" boxes. _draw_unicode_text
+            # (PIL + a Unicode-capable font) already handles this correctly for the
+            # other overlays below; this call was just left on the broken path.
+            processed_frame = self._draw_unicode_text(processed_frame, status_text, (10, 40))
 
             cv2.imshow(window_name, processed_frame)
             if cv2.waitKey(25) & 0xFF == ord('q'):
