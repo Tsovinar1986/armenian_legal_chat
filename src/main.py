@@ -8,6 +8,7 @@
 # Run the web portal with: uvicorn api:app --reload
 import sys
 import os
+import platform
 import time
 import unicodedata
 import cv2
@@ -37,7 +38,7 @@ except ImportError as e:
 try:
     from langchain_ollama import OllamaEmbeddings
     import chromadb
-    from src.db.vector_store import ChromaVectorStore
+    from src.db.vector_store import ChromaVectorStore, open_persistent_client
 except ImportError as e:
     print(f"❌ Critical import failed: {e}")
     print("Please install required packages with: pip install -r requirements.txt")
@@ -124,6 +125,21 @@ class LegalAIController:
 
 
 
+def _open_camera(source):
+    """cv2.VideoCapture wrapper that picks a working backend per OS and never
+    raises: on Windows, the default auto-detected backend (often MSMF) can
+    hang or throw for webcam indices where DirectShow (CAP_DSHOW) works fine,
+    so prefer CAP_DSHOW there for integer sources. Network/IP camera sources
+    (URL strings) go through the default backend on every OS."""
+    try:
+        if platform.system() == "Windows" and isinstance(source, int):
+            return cv2.VideoCapture(source, cv2.CAP_DSHOW)
+        return cv2.VideoCapture(source)
+    except Exception as exc:
+        print(f"⚠️ Could not open camera source {source}: {exc}")
+        return None
+
+
 def main():
     print("⚖️ Armenian Legal AI System Starting...\n")
 
@@ -142,7 +158,11 @@ def main():
                 state.camera_source = source_input
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
-    client = chromadb.PersistentClient(path="./chroma_legal_data")
+    try:
+        client = open_persistent_client("./chroma_legal_data")
+    except RuntimeError as exc:
+        print(f"❌ {exc}")
+        sys.exit(1)
     vector_db = ChromaVectorStore(client=client, collection_name="company_legal_cases", embeddings=embeddings)
     
     voice_service = VoiceService(state)
@@ -184,13 +204,23 @@ def main():
 
             if state.webcam_active:
                 if cap is None or not cap.isOpened():
-                    cap = cv2.VideoCapture(state.camera_source)
-                    if not cap.isOpened():
+                    if cap is not None:
+                        cap.release()
+                    cap = _open_camera(state.camera_source)
+                    if cap is None or not cap.isOpened():
                         print(f"⚠️ Cannot open camera source: {state.camera_source}")
                         time.sleep(1)
                         continue
 
-                ret, frame = cap.read()
+                try:
+                    ret, frame = cap.read()
+                except Exception as exc:
+                    print(f"⚠️ Camera read failed, will retry: {exc}")
+                    cap.release()
+                    cap = None
+                    time.sleep(1)
+                    continue
+
                 if ret:
                     cv2.imshow("Legal AI Feed", vision_service.process_frame(frame))
                 if cv2.waitKey(1) & 0xFF == ord('q'):

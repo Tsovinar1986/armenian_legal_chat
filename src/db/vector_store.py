@@ -13,6 +13,29 @@ no changes.
 import uuid
 
 
+def open_persistent_client(path: str):
+    """chromadb.PersistentClient(path=path), with a readable error instead of
+    the raw Rust panic ("range start index N out of range for slice of
+    length M") chromadb's sqlite bindings raise when `path` was written by an
+    incompatible chromadb version (see this module's docstring / the
+    chromadb note in requirements.txt — chromadb<1.2 cannot open a directory
+    written by chromadb>=1.5, and the reverse can also fail across major
+    versions)."""
+    import chromadb
+
+    try:
+        return chromadb.PersistentClient(path=path)
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not open the chromadb store at '{path}' "
+            f"(chromadb {chromadb.__version__}). This usually means the "
+            f"directory was written by a different chromadb version than "
+            f"the one installed here. Fix: pip install \"chromadb>=1.5.9\" "
+            f"in this environment (see requirements.txt), or delete/"
+            f"re-ingest '{path}' if it's safe to rebuild. Original error: {exc}"
+        ) from exc
+
+
 class Document:
     """Minimal stand-in for langchain_core.documents.Document — just the two
     attributes this codebase actually reads (page_content, metadata)."""

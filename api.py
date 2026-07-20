@@ -78,15 +78,14 @@ def get_legal_agent():
 
     try:
         from langchain_ollama import OllamaEmbeddings
-        import chromadb
         from src.core.state import SystemState
         from src.services.classifier import LegalCaseClassifier
         from src.agents.legal_agent import LegalAgent
         from src.db.repository import CompanyLegalRepo
-        from src.db.vector_store import ChromaVectorStore
+        from src.db.vector_store import ChromaVectorStore, open_persistent_client
 
         embeddings = OllamaEmbeddings(model="nomic-embed-text")
-        client = chromadb.PersistentClient(path="./chroma_legal_data")
+        client = open_persistent_client("./chroma_legal_data")
         vector_db = ChromaVectorStore(client=client, collection_name="company_legal_cases", embeddings=embeddings)
         classifier_service = LegalCaseClassifier(data_folder="src/data")
         _legal_agent = LegalAgent(CompanyLegalRepo(vector_db), SystemState(), classifier=classifier_service)
