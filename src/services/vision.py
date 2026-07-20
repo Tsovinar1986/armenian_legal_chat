@@ -232,7 +232,6 @@ class LegalVisionService:
         # sampled frames shouldn't become a permanent line in the report.
         action_samples = []
         emotion_samples = []
-        person_seen = False
         frames_analyzed = 0
         frame_idx = 0
         try:
@@ -244,20 +243,23 @@ class LegalVisionService:
                 if sample_indices is None or frame_idx in sample_indices:
                     results, objects_seen = self.classifier.detect_objects(frame)
                     frame_actions = []
-                    frame_has_person = False
                     for r in results:
                         for box in r.boxes:
                             if self.classifier.yolo.names[int(box.cls[0])] == 'person':
-                                frame_has_person = True
                                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                                 crop = frame[y1:y2, x1:x2]
                                 if crop.size == 0:
                                     continue
                                 frame_actions.extend(self.classifier.classify_actions(crop, objects_seen))
                     action_samples.append(frame_actions)
-                    if frame_has_person:
-                        person_seen = True
-                        emotion_samples.append(self.classifier.detect_emotion(frame))
+                    # detect_emotion() runs its own independent face search
+                    # (MediaPipe FaceMesh / Haar cascade) and already returns
+                    # None on its own when no face is found — gating this on
+                    # YOLO's separate person-box detection too was stricter
+                    # than necessary and could suppress a real, visible face
+                    # (e.g. a close-up shot) that YOLO's person detector
+                    # didn't confidently box.
+                    emotion_samples.append(self.classifier.detect_emotion(frame))
                     frames_analyzed += 1
                 frame_idx += 1
         finally:
@@ -265,7 +267,7 @@ class LegalVisionService:
 
         return {
             "actions": sorted(_confirmed_items(action_samples, min_ratio=0.25)),
-            "emotion": _majority_emotion(emotion_samples) if person_seen else None,
+            "emotion": _majority_emotion(emotion_samples),
             "frames_analyzed": frames_analyzed,
         }
 
@@ -296,10 +298,14 @@ class LegalVisionService:
         })
         self.state.update_objects(non_person_objects if not person_present else [])
 
-        # Only read an emotion off a frame that actually has a person in it —
-        # detect_emotion() still runs its own face search either way, but
-        # there's no point asking "what's the emotion" of an empty frame.
-        emotion = self.classifier.detect_emotion(frame) if person_present else None
+        # detect_emotion() runs its own independent face search (MediaPipe
+        # FaceMesh / Haar cascade) and already returns None on its own when
+        # no face is found — gating this on YOLO's separate person-box
+        # detection too (as an earlier version of this method did) was
+        # stricter than necessary and could suppress a real, visible face
+        # (e.g. a close-up shot) that YOLO's person detector didn't
+        # confidently box, making emotion silently stop showing.
+        emotion = self.classifier.detect_emotion(frame)
         self.state.update_emotion(emotion)
         if emotion:
             frame = self._draw_unicode_text(frame, f"Էմոցիան: {emotion}", (10, 70))

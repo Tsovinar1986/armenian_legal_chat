@@ -34,7 +34,6 @@ class VisionClassifier:
         )
 
         self.action_map = {
-            'slap': 'Ապտակ (Ֆիզիկական բռնություն - ՀՀ քր. օր. 195 հոդված)',
             'push': 'Հրում (Ֆիզիկական ներգործություն)',
             'hand_up': 'Ձեռքի բարձրացում (Խոսքի իրավունքի խնդրանք)',
             'hands_on_hips': 'Ձեռքեր գոտկատեղին (Պաշտպանողական դիրք)',
@@ -215,8 +214,13 @@ class VisionClassifier:
         r_hip = lm[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
         r_knee = lm[mp.solutions.pose.PoseLandmark.RIGHT_KNEE]
 
-        if r_wrist.y < nose.y and abs(r_wrist.x - nose.x) < 0.15:
-            actions.append(self.action_map['slap'])
+        # A "slap" heuristic used to live here: right wrist above nose level,
+        # roughly x-aligned with it. Removed — that's just "hand near own
+        # face" (scratching, adjusting glasses, touching hair all match it
+        # too), a single static frame with no motion and no check for another
+        # person being nearby. It was firing on video with no slap in it and
+        # labeling it with a specific criminal-code citation (Article 195),
+        # which this kind of geometry can't actually support.
         if r_wrist.z < -0.6 and l_wrist.z < -0.6:
             actions.append(self.action_map['push'])
         if r_wrist.y < (nose.y - 0.2) or l_wrist.y < (nose.y - 0.2):
