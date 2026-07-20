@@ -1,4 +1,4 @@
-FROM /Users/tsovinarbabakhanyan/Desktop/Armenian_Chat_part/armenia_lawyer_router_gguf.Q4_K_M.gguf
+FROM /Users/tsovinarbabakhanyan/Desktop/Armenian_Chat_part/armenia-lawyer-router.Q4_K_M.gguf
 # 1. SET THE BEHAVIOR
 SYSTEM """
 You are a senior Armenian Legal Consultant.
