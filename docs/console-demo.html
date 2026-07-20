@@ -1,0 +1,583 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Armenian Legal AI — Console Demo</title>
+<style>
+  :root{
+    --bg:#070d17;
+    --bg-glow-a: rgba(37,99,235,0.16);
+    --bg-glow-b: rgba(15,118,110,0.12);
+    --surface:#111c2c;
+    --surface-2:#0c1726;
+    --border:#23344f;
+    --border-soft:#1a2740;
+    --ink:#f5f7fa;
+    --muted:#9fb0cb;
+    --muted-2:#5f7699;
+    --accent:#2563eb;
+    --accent-ink:#eaf1ff;
+    --accent-2:#0f766e;
+    --live:#34d399;
+    --warn-bg:#3a2410;
+    --warn-border:#8a5a1f;
+    --warn-ink:#f5c98a;
+
+    --font-display: Georgia, "Iowan Old Style", "Palatino Linotype", "Times New Roman", serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans Armenian", "Noto Sans", Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+
+  body{
+    font-family:var(--font-body);
+    background:
+      radial-gradient(600px 320px at 12% -8%, var(--bg-glow-a), transparent 60%),
+      radial-gradient(560px 300px at 92% 6%, var(--bg-glow-b), transparent 60%),
+      var(--bg);
+    color:var(--ink);
+    min-height:100vh;
+    padding:48px 20px 64px;
+    display:flex;
+    justify-content:center;
+    -webkit-font-smoothing:antialiased;
+  }
+
+  a{ color:inherit; }
+
+  .page{
+    width:100%;
+    max-width:780px;
+    display:flex;
+    flex-direction:column;
+    gap:22px;
+  }
+
+  /* ---------- Masthead ---------- */
+  .masthead{
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+  }
+  .eyebrow{
+    font-family:var(--font-mono);
+    font-size:11px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--muted-2);
+  }
+  h1{
+    font-family:var(--font-display);
+    font-weight:400;
+    font-size:clamp(26px, 4vw, 34px);
+    line-height:1.15;
+    margin:0;
+    text-wrap:balance;
+    letter-spacing:.01em;
+  }
+  h1 em{ font-style:italic; color:var(--muted); }
+  .sub{
+    color:var(--muted);
+    font-size:14px;
+    max-width:58ch;
+    line-height:1.5;
+  }
+  .sub code{
+    font-family:var(--font-mono);
+    font-size:12.5px;
+    background:var(--surface-2);
+    border:1px solid var(--border-soft);
+    padding:1px 6px;
+    border-radius:5px;
+    color:var(--accent-ink);
+  }
+
+  /* ---------- Console card ---------- */
+  .console{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:16px;
+    overflow:hidden;
+    box-shadow:0 30px 60px -30px rgba(0,0,0,.6);
+  }
+
+  .console-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    padding:14px 18px;
+    border-bottom:1px solid var(--border);
+    background:linear-gradient(180deg, rgba(255,255,255,.02), transparent);
+  }
+  .console-bar-left{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    min-width:0;
+  }
+  .console-dot{
+    width:8px; height:8px; border-radius:50%;
+    background:var(--live);
+    box-shadow:0 0 0 3px rgba(52,211,153,.15);
+    flex:none;
+  }
+  .console-title{
+    font-size:13.5px;
+    font-weight:600;
+    letter-spacing:.01em;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .console-title .divider{ color:var(--muted-2); font-weight:400; margin:0 6px; }
+  .console-title .path{ color:var(--muted); font-weight:400; font-family:var(--font-mono); font-size:12px; }
+
+  .pills{ display:flex; gap:8px; flex:none; }
+  .pill{
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--font-mono);
+    font-size:11.5px;
+    padding:5px 10px 5px 8px;
+    border-radius:999px;
+    border:1px solid var(--border);
+    background:var(--surface-2);
+    color:var(--muted);
+    cursor:pointer;
+    user-select:none;
+    transition:border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .pill:hover{ border-color:var(--border-soft); }
+  .pill:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .pill .dot{ width:6px; height:6px; border-radius:50%; background:var(--muted-2); flex:none; }
+  .pill.on{ color:var(--accent-ink); border-color:rgba(37,99,235,.45); background:rgba(37,99,235,.12); }
+  .pill.on .dot{ background:var(--live); box-shadow:0 0 0 2px rgba(52,211,153,.18); }
+  .pill.off .dot{ background:var(--muted-2); }
+
+  /* ---------- Transcript ---------- */
+  .transcript{
+    height:400px;
+    overflow-y:auto;
+    padding:20px 18px;
+    display:flex;
+    flex-direction:column;
+    gap:14px;
+    background:var(--surface-2);
+    scroll-behavior:smooth;
+  }
+  .transcript::-webkit-scrollbar{ width:8px; }
+  .transcript::-webkit-scrollbar-thumb{ background:var(--border); border-radius:8px; }
+
+  .row{ display:flex; flex-direction:column; max-width:82%; gap:4px; }
+  .row.user{ align-self:flex-end; align-items:flex-end; }
+  .row.bot{ align-self:flex-start; align-items:flex-start; }
+  .row.system{ align-self:center; max-width:92%; align-items:center; }
+
+  .who{
+    font-family:var(--font-mono);
+    font-size:10.5px;
+    letter-spacing:.08em;
+    text-transform:uppercase;
+    color:var(--muted-2);
+    padding:0 2px;
+  }
+
+  .bubble{
+    padding:11px 14px;
+    border-radius:14px;
+    font-size:14.5px;
+    line-height:1.55;
+  }
+  .row.user .bubble{
+    background:var(--accent);
+    color:var(--accent-ink);
+    border-bottom-right-radius:4px;
+  }
+  .row.bot .bubble{
+    background:var(--surface);
+    border:1px solid var(--border);
+    color:var(--ink);
+    border-bottom-left-radius:4px;
+  }
+  .row.system .bubble{
+    background:transparent;
+    border:1px dashed var(--border);
+    color:var(--muted);
+    font-family:var(--font-mono);
+    font-size:12px;
+    padding:8px 14px;
+    border-radius:999px;
+  }
+  .row.system .bubble.warn{
+    border:1px solid var(--warn-border);
+    background:var(--warn-bg);
+    color:var(--warn-ink);
+  }
+
+  .typing{ display:inline-flex; gap:3px; padding:2px 0; }
+  .typing span{
+    width:5px; height:5px; border-radius:50%;
+    background:var(--muted-2);
+    animation:blink 1.1s infinite ease-in-out;
+  }
+  .typing span:nth-child(2){ animation-delay:.15s; }
+  .typing span:nth-child(3){ animation-delay:.3s; }
+  @keyframes blink{ 0%,80%,100%{ opacity:.25; transform:translateY(0); } 40%{ opacity:1; transform:translateY(-2px); } }
+
+  /* ---------- Control dock ---------- */
+  .dock{
+    border-top:1px solid var(--border);
+    padding:14px 18px 16px;
+    display:flex;
+    flex-direction:column;
+    gap:10px;
+    background:var(--surface);
+  }
+  .dock-controls{ display:flex; gap:8px; flex-wrap:wrap; }
+
+  .ctrl{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-family:var(--font-body);
+    font-size:12.5px;
+    font-weight:600;
+    color:var(--muted);
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:8px 12px;
+    cursor:pointer;
+    transition:border-color .15s ease, color .15s ease, background .15s ease, transform .1s ease;
+  }
+  .ctrl:hover{ border-color:var(--border-soft); color:var(--ink); }
+  .ctrl:active{ transform:translateY(1px); }
+  .ctrl:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .ctrl kbd{
+    font-family:var(--font-mono);
+    font-size:10px;
+    color:var(--muted-2);
+    border:1px solid var(--border-soft);
+    border-radius:4px;
+    padding:1px 5px;
+    background:var(--bg);
+  }
+  .ctrl.active{ color:var(--accent-ink); border-color:rgba(37,99,235,.5); background:rgba(37,99,235,.14); }
+  .ctrl.active kbd{ color:var(--accent-ink); border-color:rgba(37,99,235,.4); }
+
+  .composer{
+    display:flex;
+    gap:8px;
+    align-items:center;
+  }
+  .composer input[type="text"]{
+    flex:1;
+    background:var(--surface-2);
+    border:1px solid var(--border);
+    color:var(--ink);
+    font-family:var(--font-body);
+    font-size:14px;
+    padding:11px 14px;
+    border-radius:11px;
+    min-width:0;
+  }
+  .composer input[type="text"]::placeholder{ color:var(--muted-2); }
+  .composer input[type="text"]:focus{ outline:none; border-color:var(--accent); }
+  .composer input[type="text"]:disabled{ opacity:.5; }
+
+  .send{
+    flex:none;
+    background:var(--accent);
+    color:var(--accent-ink);
+    border:none;
+    font-family:var(--font-body);
+    font-weight:600;
+    font-size:13.5px;
+    padding:11px 18px;
+    border-radius:11px;
+    cursor:pointer;
+    transition:filter .15s ease, transform .1s ease;
+  }
+  .send:hover{ filter:brightness(1.08); }
+  .send:active{ transform:translateY(1px); }
+  .send:disabled{ opacity:.45; cursor:default; }
+  .send:focus-visible{ outline:2px solid var(--accent-ink); outline-offset:2px; }
+
+  #fileInput{ display:none; }
+
+  /* ---------- Legend ---------- */
+  .legend{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px 18px;
+    padding:2px 4px;
+    font-family:var(--font-mono);
+    font-size:11.5px;
+    color:var(--muted-2);
+  }
+  .legend span b{ color:var(--muted); font-weight:600; }
+
+  .footer-note{
+    font-size:12px;
+    color:var(--muted-2);
+    text-align:center;
+    line-height:1.6;
+    padding-top:4px;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .typing span{ animation:none; }
+    .transcript{ scroll-behavior:auto; }
+  }
+
+  @media (max-width:520px){
+    .console-title .path{ display:none; }
+    .transcript{ height:340px; }
+    .row{ max-width:92%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <header class="masthead">
+    <div class="eyebrow">Frontend preview · no backend wired</div>
+    <h1>Legal AI, <em>as it will actually run</em></h1>
+    <p class="sub">
+      A click-through of the desktop console's interaction model — mic on/off, video upload,
+      typed questions — the same controls as <code>src/main.py</code>, minus the LLM, speech
+      recognition, and vector search behind them. Everything below is scripted.
+    </p>
+  </header>
+
+  <div class="console">
+    <div class="console-bar">
+      <div class="console-bar-left">
+        <span class="console-dot" id="liveDot"></span>
+        <span class="console-title">Հայկական իրավական օգնական <span class="divider">·</span> <span class="path">armenian_legal_chat / desktop</span></span>
+      </div>
+      <div class="pills">
+        <button class="pill on" id="micPill" type="button" aria-pressed="true">
+          <span class="dot"></span>🎤 Mic
+        </button>
+        <button class="pill off" id="camPill" type="button" aria-pressed="false">
+          <span class="dot"></span>📷 Camera
+        </button>
+      </div>
+    </div>
+
+    <div class="transcript" id="transcript">
+      <div class="row bot">
+        <span class="who">AI</span>
+        <div class="bubble">🤖 Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...</div>
+      </div>
+    </div>
+
+    <div class="dock">
+      <div class="dock-controls">
+        <button class="ctrl active" id="btnMic" type="button"><kbd>m</kbd>🎤 Ask by voice</button>
+        <button class="ctrl" id="btnUpload" type="button"><kbd>u</kbd>📎 Upload doc / video</button>
+        <button class="ctrl" id="btnCam" type="button"><kbd>c</kbd>📷 Toggle camera</button>
+        <input type="file" id="fileInput" accept=".txt,.xlsx,.mp4,.mov,.avi,.mkv" />
+      </div>
+
+      <div class="composer">
+        <input type="text" id="typedInput" placeholder="Type your legal question in Armenian…" />
+        <button class="send" id="btnSend" type="button"><kbd style="margin-right:6px;">t</kbd>Send</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><b>m</b> — one-shot mic listen</span>
+    <span><b>v</b> — mic on/off (background listener)</span>
+    <span><b>u</b> — upload document or video</span>
+    <span><b>t</b> — type a question</span>
+    <span><b>q</b> — quit</span>
+  </div>
+
+  <p class="footer-note">This preview simulates responses client-side — no audio is recorded, no file leaves this page, and no request reaches the Legal AI backend.</p>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  var state = { mic: true, cam: false, busy: false };
+
+  var transcript   = document.getElementById('transcript');
+  var micPill      = document.getElementById('micPill');
+  var camPill      = document.getElementById('camPill');
+  var btnMic       = document.getElementById('btnMic');
+  var btnUpload    = document.getElementById('btnUpload');
+  var btnCam       = document.getElementById('btnCam');
+  var fileInput    = document.getElementById('fileInput');
+  var typedInput   = document.getElementById('typedInput');
+  var btnSend      = document.getElementById('btnSend');
+  var liveDot      = document.getElementById('liveDot');
+
+  var SAMPLE_QUESTIONS = [
+    "Ինչպե՞ս կարող եմ վիճարկել աշխատանքից ազատման որոշումը:",
+    "Ի՞նչ փաստաթղթեր են պետք վարձակալության պայմանագիր կնքելու համար:",
+    "Որքա՞ն ժամանակում է քննվում քաղաքացիական հայցը:"
+  ];
+  var qi = 0;
+
+  function scrollToEnd(){
+    transcript.scrollTop = transcript.scrollHeight;
+  }
+
+  function addRow(kind, who, html, opts){
+    opts = opts || {};
+    var row = document.createElement('div');
+    row.className = 'row ' + kind;
+
+    if (who){
+      var whoEl = document.createElement('span');
+      whoEl.className = 'who';
+      whoEl.textContent = who;
+      row.appendChild(whoEl);
+    }
+
+    var bubble = document.createElement('div');
+    bubble.className = 'bubble' + (opts.warn ? ' warn' : '');
+    bubble.innerHTML = html;
+    row.appendChild(bubble);
+
+    transcript.appendChild(row);
+    scrollToEnd();
+    return { row: row, bubble: bubble };
+  }
+
+  function addTyping(who){
+    var ref = addRow('bot', who, '<span class="typing"><span></span><span></span><span></span></span>');
+    return ref;
+  }
+
+  function replyTo(userText){
+    state.busy = true;
+    setComposerEnabled(false);
+    var typing = addTyping('AI');
+    var delay = 650 + Math.random() * 500;
+    setTimeout(function(){
+      typing.row.remove();
+      addRow('bot', 'AI',
+        'Սա ցուցադրական պատասխան է՝ ցույց տալու համար, թե ինչպես կաշխատի օգնականը իրական տվյալների հետ. ' +
+        '«' + userText + '» հարցը կուղարկվեր դասակարգիչին և իրավաբանական բազային։'
+      );
+      state.busy = false;
+      setComposerEnabled(true);
+      typedInput.focus();
+    }, delay);
+  }
+
+  function setComposerEnabled(on){
+    typedInput.disabled = !on;
+    btnSend.disabled = !on;
+  }
+
+  function setMicPill(on){
+    state.mic = on;
+    micPill.classList.toggle('on', on);
+    micPill.classList.toggle('off', !on);
+    micPill.setAttribute('aria-pressed', on ? 'true' : 'false');
+    liveDot.style.background = on ? 'var(--live)' : 'var(--muted-2)';
+    liveDot.style.boxShadow = on ? '0 0 0 3px rgba(52,211,153,.15)' : 'none';
+  }
+
+  function setCamPill(on){
+    state.cam = on;
+    camPill.classList.toggle('on', on);
+    camPill.classList.toggle('off', !on);
+    camPill.setAttribute('aria-pressed', on ? 'true' : 'false');
+    btnCam.classList.toggle('active', on);
+  }
+
+  micPill.addEventListener('click', function(){
+    setMicPill(!state.mic);
+    addRow('system', null,
+      state.mic ? '🎤 Microphone turned ON' : '🔇 Microphone turned OFF'
+    );
+  });
+
+  btnCam.addEventListener('click', function(){
+    setCamPill(!state.cam);
+    addRow('system', null,
+      state.cam ? '📷 Camera feed started' : '📷 Camera feed stopped'
+    );
+  });
+
+  btnMic.addEventListener('click', function(){
+    if (state.busy) return;
+    if (!state.mic){
+      addRow('system', null, '🎙️ Microphone is off. Press [v] to turn it on first.', { warn:true });
+      return;
+    }
+    state.busy = true;
+    setComposerEnabled(false);
+    var listening = addRow('system', null, '🎤 Listening… speak now');
+    setTimeout(function(){
+      listening.row.remove();
+      var q = SAMPLE_QUESTIONS[qi % SAMPLE_QUESTIONS.length];
+      qi++;
+      addRow('user', 'You', q);
+      state.busy = false;
+      setComposerEnabled(true);
+      replyTo(q);
+    }, 1100);
+  });
+
+  btnUpload.addEventListener('click', function(){
+    fileInput.click();
+  });
+
+  fileInput.addEventListener('change', function(){
+    var f = fileInput.files && fileInput.files[0];
+    if (!f) return;
+    var isVideo = /\.(mp4|mov|avi|mkv)$/i.test(f.name);
+    addRow('system', null,
+      (isVideo ? '🎥 Analyzing video: ' : '📄 Processing file: ') + f.name
+    );
+    setTimeout(function(){
+      addRow('system', null,
+        isVideo
+          ? '✅ Analysis complete (demo — no frames were actually processed).'
+          : '✅ ' + f.name + ' embedded into the case database (demo — nothing was stored).'
+      );
+    }, 900);
+    fileInput.value = '';
+  });
+
+  function submitTyped(){
+    if (state.busy) return;
+    var val = typedInput.value.trim();
+    if (!val) return;
+    addRow('user', 'You', val);
+    typedInput.value = '';
+    replyTo(val);
+  }
+
+  btnSend.addEventListener('click', submitTyped);
+  typedInput.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') submitTyped();
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (document.activeElement === typedInput) return;
+    if (e.key === 'v'){ setMicPill(!state.mic); addRow('system', null, state.mic ? '🎤 Microphone turned ON' : '🔇 Microphone turned OFF'); }
+    if (e.key === 'm'){ btnMic.click(); }
+    if (e.key === 'u'){ btnUpload.click(); }
+    if (e.key === 'c'){ btnCam.click(); }
+    if (e.key === 't'){ typedInput.focus(); }
+  });
+
+})();
+</script>
+
+</body>
+</html>
