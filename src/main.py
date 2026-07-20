@@ -94,6 +94,9 @@ class LegalAIController:
             print(f"⚠️ Error: {ex}")
 
     def handle_mic(self):
+        if not self.state.mic_active:
+            print("\n🎙️ Microphone is off. Press [v] to turn it on first.")
+            return
         print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...")
         try:
             user_speech = self.voice.listen_once()
@@ -172,12 +175,16 @@ def main():
     ingestor = IngestionService(vector_db)
 
     controller = LegalAIController(state, vision_service, voice_service, legal_agent, ingestor)
-    voice_service.start_background_listener()
+
+    use_mic = input("🎤 Enable background microphone listening? (y/n): ").strip().lower() == 'y'
+    state.mic_active = use_mic
+    if state.mic_active:
+        voice_service.start_background_listener()
 
     def on_press(key):
         if not state.terminal_input_active:
             try:
-                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 'q']:
+                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 'q', 'v']:
                     state.current_action = key.char
             except: pass
 
@@ -185,7 +192,7 @@ def main():
     if keyboard is not None:
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
-        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [q]uit")
+        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [v]oice on/off, [q]uit")
     else:
         print("\n✅ Keyboard listener disabled. Use the main app interface for input.")
 
@@ -199,6 +206,13 @@ def main():
                 if action == 'm': controller.handle_mic()
                 elif action == 't': controller.handle_typed_text()
                 elif action == 'u': controller.handle_upload()
+                elif action == 'v':
+                    state.mic_active = not state.mic_active
+                    if state.mic_active:
+                        voice_service.start_background_listener()
+                        print("\n🎤 Microphone turned ON")
+                    else:
+                        print("\n🔇 Microphone turned OFF")
                 elif action == 'q': state.is_running = False
                 state.terminal_input_active = False
 

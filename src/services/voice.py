@@ -138,10 +138,11 @@ class VoiceService:
         print("🎤 Background listening ready...")
         while self.state.is_running:
             # Completely pause listening iteration if the terminal input guard is active
-            if getattr(self.state, 'terminal_input_active', False):
+            # or the user has toggled the mic off.
+            if getattr(self.state, 'terminal_input_active', False) or not getattr(self.state, 'mic_active', True):
                 time.sleep(0.2)
                 continue
-                
+
             try:
                 with self.microphone as source:
                     self.recognizer.adjust_for_ambient_noise(source, duration=0.5)

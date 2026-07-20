@@ -5,6 +5,7 @@ class SystemState:
         self._lock = Lock()
         self.is_running = True
         self.webcam_active = True
+        self.mic_active = True
         self.current_action = None
         
         # Guard flag to pause background threads during user interactive text input
