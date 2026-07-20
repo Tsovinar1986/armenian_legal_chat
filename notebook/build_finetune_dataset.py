@@ -16,8 +16,10 @@ from each case's own real Category label.
 
 Usage:
     ./law/bin/python notebook/build_finetune_dataset.py
-Writes notebook/finetune_dataset.csv (query, answer, source_case, source_judge).
-Upload that CSV as Kaggle dataset input for fine-tune-to-gguf.ipynb.
+Writes src/data/finetune_dataset.csv (query, answer, source_case, source_judge)
+— alongside its source, court_papers_full.csv, rather than under notebook/,
+since it's a data file, not a notebook. Upload it as a Kaggle dataset input
+for fine-tune-to-gguf.ipynb.
 """
 import csv
 import os
@@ -25,8 +27,9 @@ import re
 
 csv.field_size_limit(10 * 1024 * 1024)
 
-SRC_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "data", "court_papers_full.csv")
-OUT_PATH = os.path.join(os.path.dirname(__file__), "finetune_dataset.csv")
+_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "src", "data")
+SRC_PATH = os.path.join(_DATA_DIR, "court_papers_full.csv")
+OUT_PATH = os.path.join(_DATA_DIR, "finetune_dataset.csv")
 
 MAX_EXCERPT_CHARS = 550  # keeps the combined instruction+response comfortably under
                           # the notebook's max_seq_length=1024 tokens even for
