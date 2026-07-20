@@ -55,9 +55,14 @@ class LegalAIController:
 
     def handle_upload(self):
         print("\n📂 Enter full path to legal document (txt, xlsx) or video (mp4, mov):")
-        file_path = input(">>> ").strip().strip('"\'')
+        raw_input_path = input(">>> ")
+        # Strip straight AND curly/smart quotes (macOS text substitution turns
+        # ' into ‘/’ and " into “/” in some input sources) — .strip('"\'')
+        # alone leaves a smart quote attached, which silently breaks
+        # os.path.exists() on an otherwise-correct, genuinely existing path.
+        file_path = raw_input_path.strip().strip("\"'‘’“”")
         if not os.path.exists(file_path):
-            print("⚠️ File not found.")
+            print(f"⚠️ File not found: {file_path!r} (received: {raw_input_path!r})")
             return
 
         # --- VIDEO PROCESSING PIPELINE ---

@@ -51,41 +51,10 @@ class VoiceService:
 
         # Speech Recognition
         self.recognizer = sr.Recognizer()
-        self.microphone = None
-        self.current_device_index = None
+        self.microphone = sr.Microphone()
+        print("✅ Using default microphone")
 
         self.listening_thread = None
-        self.list_available_microphones()
-
-    def list_available_microphones(self):
-        """Ask yes/no whether to use the default microphone; only list
-        devices and ask which one if the answer is no."""
-        use_default = input("\n🎤 Use the default microphone? (y/n): ").strip().lower() == 'y'
-        if use_default:
-            self.microphone = sr.Microphone()
-            print("✅ Using default microphone")
-            return
-
-        print("\n🎤 Available Microphones:")
-        mic_list = sr.Microphone.list_microphone_names()
-
-        for i, name in enumerate(mic_list):
-            print(f"  [{i}] {name}")
-
-        print("\n💡 Plug in your headphones/earphones now if you want to use their mic.")
-
-        try:
-            choice = input("Enter microphone number (or press Enter for default): ").strip()
-            if choice.isdigit():
-                self.current_device_index = int(choice)
-                self.microphone = sr.Microphone(device_index=self.current_device_index)
-                print(f"✅ Selected: {mic_list[self.current_device_index]}")
-            else:
-                self.microphone = sr.Microphone()
-                print("✅ Using default microphone")
-        except Exception as e:
-            print(f"⚠️ Using default mic. Error: {e}")
-            self.microphone = sr.Microphone()
 
     def speak(self, text: str):
         """Generates clear, beautiful native Armenian voice answers instead of robotic sound."""
