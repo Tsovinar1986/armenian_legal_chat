@@ -1,4 +1,4 @@
-from collections import deque
+from collections import Counter, deque
 
 import cv2
 import numpy as np
@@ -19,6 +19,42 @@ MENTAL_HEALTH_CONCERN_RATIO = 0.6
 OBJECT_NAME_HY = {
     "cell phone": "հեռախոս",
 }
+
+def _confirmed_items(recent_samples, min_ratio=0.4):
+    """recent_samples: an iterable of per-sampled-frame collections (action
+    lists, one per recent classify_actions() call). Returns only the items
+    that recurred in at least min_ratio of those samples.
+
+    Why this exists: classify_actions() runs independently on every sampled
+    frame with no memory of previous frames, so a single noisy pose estimate
+    (motion blur, a bad crop, an unlucky landmark jitter) can spuriously fire
+    an action that never really happened — and since callers were adding
+    every sampled frame's raw output straight into the reported set, that
+    one-off noise became a permanent, confidently-reported "detection".
+    Requiring recurrence across a small rolling window (see the deque this is
+    called with) filters that out while still catching genuinely sustained
+    behavior within roughly a second of real time.
+    """
+    samples = list(recent_samples)
+    if not samples:
+        return set()
+    counts = Counter()
+    for sample in samples:
+        counts.update(set(sample))
+    threshold = max(1, round(len(samples) * min_ratio))
+    return {item for item, n in counts.items() if n >= threshold}
+
+
+def _majority_emotion(recent_emotion_samples):
+    """Same idea as _confirmed_items but for the single current emotion
+    value: majority vote across the recent window instead of trusting
+    whatever the single latest sample happened to say, which is what made
+    the displayed emotion flicker between unrelated labels every sample."""
+    non_none = [e for e in recent_emotion_samples if e]
+    if not non_none:
+        return None
+    return Counter(non_none).most_common(1)[0][0]
+
 
 MENTAL_HEALTH_SUGGESTION_HY = (
     "💙 Վերջին րոպեների ընթացքում նկատվում է տխուր/անհանգիստ տրամադրություն։ "
@@ -111,6 +147,14 @@ class LegalVisionService:
         unique_actions = set()
         last_emotion = None
         last_objects = []
+        # Rolling window over the last few *sampled* frames (not raw video
+        # frames) — an action/emotion only gets folded into unique_actions/
+        # last_emotion (and therefore into the final report and the fallback
+        # status bar) once it recurs across this window. See _confirmed_items'
+        # docstring for why: a single sampled frame's raw classify_actions()
+        # output is not reliable enough to report as fact on its own.
+        recent_actions = deque(maxlen=5)
+        recent_emotions = deque(maxlen=5)
         frame_idx = 0
         try:
             while cap.isOpened():
@@ -127,12 +171,14 @@ class LegalVisionService:
                 if frame_idx % sample_every == 0:
                     frame = self.process_frame(frame)  # draws its own per-person action + emotion labels
                     current_actions = self.state.get_actions()
-                    if current_actions:
-                        unique_actions.update(current_actions)
                     current_emotion = self.state.get_emotion()
-                    if current_emotion:
-                        last_emotion = current_emotion
                     person_in_frame = bool(current_actions or current_emotion)
+
+                    recent_actions.append(current_actions)
+                    unique_actions.update(_confirmed_items(recent_actions))
+                    recent_emotions.append(current_emotion)
+                    last_emotion = _majority_emotion(recent_emotions) or last_emotion
+
                     last_objects = self.state.get_objects() if not person_in_frame else []
 
                 # Only add the aggregate bar for what process_frame's own
@@ -179,8 +225,14 @@ class LegalVisionService:
             if total_frames > max_frames else None
         )
 
-        unique_actions = set()
-        last_emotion = None
+        # Collected across ALL sampled frames, then confirmed/majority-voted
+        # once at the end (see _confirmed_items/_majority_emotion) instead of
+        # trusting each sampled frame's raw output as fact on its own — a
+        # single noisy pose estimate from one of the (sparse, evenly-spaced)
+        # sampled frames shouldn't become a permanent line in the report.
+        action_samples = []
+        emotion_samples = []
+        person_seen = False
         frames_analyzed = 0
         frame_idx = 0
         try:
@@ -191,23 +243,29 @@ class LegalVisionService:
 
                 if sample_indices is None or frame_idx in sample_indices:
                     results, objects_seen = self.classifier.detect_objects(frame)
+                    frame_actions = []
+                    frame_has_person = False
                     for r in results:
                         for box in r.boxes:
                             if self.classifier.yolo.names[int(box.cls[0])] == 'person':
+                                frame_has_person = True
                                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                                 crop = frame[y1:y2, x1:x2]
                                 if crop.size == 0:
                                     continue
-                                unique_actions.update(self.classifier.classify_actions(crop, objects_seen))
-                    last_emotion = self.classifier.detect_emotion(frame) or last_emotion
+                                frame_actions.extend(self.classifier.classify_actions(crop, objects_seen))
+                    action_samples.append(frame_actions)
+                    if frame_has_person:
+                        person_seen = True
+                        emotion_samples.append(self.classifier.detect_emotion(frame))
                     frames_analyzed += 1
                 frame_idx += 1
         finally:
             cap.release()
 
         return {
-            "actions": sorted(unique_actions),
-            "emotion": last_emotion,
+            "actions": sorted(_confirmed_items(action_samples, min_ratio=0.25)),
+            "emotion": _majority_emotion(emotion_samples) if person_seen else None,
             "frames_analyzed": frames_analyzed,
         }
 

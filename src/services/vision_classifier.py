@@ -179,6 +179,23 @@ class VisionClassifier:
             abs(l_wrist.y - nose.y) < 0.12 and abs(l_elbow.y - nose.y) < 0.15
         )
 
+    # Landmarks classify_actions' heuristics actually read. If MediaPipe isn't
+    # confident about most of these (occlusion, motion blur, a bad crop from a
+    # jittery YOLO box), the raw (x, y, z) positions are unreliable — geometric
+    # checks on noise is exactly what was producing "random" action spikes.
+    _POSE_LANDMARKS_USED = [
+        'RIGHT_WRIST', 'LEFT_WRIST', 'NOSE', 'RIGHT_HIP', 'LEFT_HIP',
+        'RIGHT_KNEE', 'LEFT_KNEE', 'RIGHT_ANKLE', 'LEFT_ANKLE',
+        'RIGHT_SHOULDER', 'LEFT_SHOULDER', 'RIGHT_INDEX', 'LEFT_INDEX',
+        'RIGHT_ELBOW', 'LEFT_ELBOW',
+    ]
+    _MIN_LANDMARK_VISIBILITY = 0.5
+
+    def _pose_is_reliable(self, lm):
+        indices = [getattr(mp.solutions.pose.PoseLandmark, name) for name in self._POSE_LANDMARKS_USED]
+        visible = sum(1 for i in indices if lm[i].visibility >= self._MIN_LANDMARK_VISIBILITY)
+        return visible / len(indices) >= 0.7
+
     def classify_actions(self, crop, detected_objects):
         if self.mp_pose is None:
             return [self.action_map['normal']]
@@ -189,6 +206,8 @@ class VisionClassifier:
             return [self.action_map['normal']]
 
         lm = res_mp.pose_landmarks.landmark
+        if not self._pose_is_reliable(lm):
+            return [self.action_map['normal']]
         actions = []
         r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
         l_wrist = lm[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
