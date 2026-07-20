@@ -14,8 +14,22 @@ const backendPill = document.getElementById("backendPill");
 const backendStatus = document.getElementById("backendStatus");
 const langButtons = document.querySelectorAll(".lang-btn");
 const greetingBubble = document.getElementById("greetingBubble");
+const consoleTitleText = document.getElementById("consoleTitleText");
+const onboarding = document.getElementById("onboarding");
+const onboardingClose = document.getElementById("onboardingClose");
 
 const MAX_RECORDING_MS = 12000;
+const ONBOARDING_DISMISSED_KEY = "legalui.onboardingDismissed";
+
+if (onboarding && onboardingClose) {
+  if (localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1") {
+    onboarding.hidden = true;
+  }
+  onboardingClose.addEventListener("click", () => {
+    onboarding.hidden = true;
+    localStorage.setItem(ONBOARDING_DISMISSED_KEY, "1");
+  });
+}
 
 // Matches api.py's STT_LANGUAGE_MAP / src/agents/legal_crew.py's LANGUAGE_NAMES —
 // the same three short codes drive both the chat response language and the
@@ -29,6 +43,11 @@ const GREETINGS = {
   hy: "🤖 Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...",
   en: "🤖 How can I help you today...",
   ru: "🤖 Чем я могу вам помочь сегодня...",
+};
+const CONSOLE_TITLES = {
+  hy: "Հայկական իրավական օգնական",
+  en: "Armenian Legal Assistant",
+  ru: "Армянский юридический помощник",
 };
 
 let sessionId = null;
@@ -103,6 +122,7 @@ function setLanguage(lang) {
   // and answered, and switching languages doesn't spam the chat with a
   // separate notice for every click.
   if (greetingBubble) greetingBubble.textContent = GREETINGS[lang];
+  if (consoleTitleText) consoleTitleText.textContent = CONSOLE_TITLES[lang];
 }
 
 langButtons.forEach((btn) => {

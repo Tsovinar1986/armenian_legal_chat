@@ -80,6 +80,52 @@ h1 em{ font-style:italic; color:var(--muted); }
   color:var(--accent-ink);
 }
 
+/* ---------- Onboarding ---------- */
+.onboarding{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:16px 18px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.onboarding[hidden]{ display:none; }
+.onboarding-head{ display:flex; align-items:center; justify-content:space-between; }
+.onboarding-close{
+  background:transparent;
+  border:1px solid var(--border);
+  color:var(--muted);
+  border-radius:8px;
+  width:26px;
+  height:26px;
+  line-height:1;
+  cursor:pointer;
+  font-size:13px;
+}
+.onboarding-close:hover{ color:var(--ink); border-color:var(--border-soft); }
+.onboarding-close:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+.onboarding-steps{
+  margin:0;
+  padding-left:20px;
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+  color:var(--muted);
+  font-size:13.5px;
+  line-height:1.55;
+}
+.onboarding-steps strong{ color:var(--ink); font-weight:600; }
+.onboarding-steps kbd{
+  font-family:var(--font-mono);
+  font-size:10.5px;
+  color:var(--muted-2);
+  border:1px solid var(--border-soft);
+  border-radius:4px;
+  padding:1px 5px;
+  background:var(--surface-2);
+}
+
 /* ---------- Console card ---------- */
 .console{
   background:var(--surface);

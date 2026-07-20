@@ -24,11 +24,24 @@
     </p>
   </header>
 
+  <div class="onboarding" id="onboarding">
+    <div class="onboarding-head">
+      <span class="eyebrow">First time here?</span>
+      <button class="onboarding-close" id="onboardingClose" type="button" aria-label="Dismiss">✕</button>
+    </div>
+    <ol class="onboarding-steps">
+      <li><strong>Pick a language</strong> — 🇦🇲/🇬🇧/🇷🇺 below the chat, before you ask anything.</li>
+      <li><strong>Ask by typing</strong> (press <kbd>t</kbd> to focus the box) <strong>or by voice</strong> — click 🎤, speak, click again to stop.</li>
+      <li><strong>Upload a document or video</strong> with 📎 — text files get embedded into the case database, video gets analyzed for actions/emotion.</li>
+      <li>Watch the <strong>status pill</strong> top-right — if it says "backend unreachable," start the backend first (see the note at the bottom of this page).</li>
+    </ol>
+  </div>
+
   <div class="console">
     <div class="console-bar">
       <div class="console-bar-left">
         <span class="console-dot" id="liveDot"></span>
-        <span class="console-title">Հայկական իրավական օգնական <span class="divider">·</span> <span class="path" id="backendPath">/api/chat</span></span>
+        <span class="console-title"><span id="consoleTitleText">Հայկական իրավական օգնական</span> <span class="divider">·</span> <span class="path" id="backendPath">/api/chat</span></span>
       </div>
       <div class="pills">
         <span class="pill" id="backendPill">

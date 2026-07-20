@@ -155,6 +155,54 @@ No action needed for existing callers — `/api/chat`, `/api/therapist-chat`, an
 
 ---
 
+### 11. **Web Frontend (Vite) Wired to the Live Backend**
+A new browser client at `frontend/` (`npm run dev`, `localhost:5173`) — a chat console that makes real requests against the FastAPI backend, not a mockup. Built to visually demo how the desktop CLI's controls (mic, upload, typed questions) work as a standalone web page.
+
+**Features:**
+- Typed questions call `POST /api/chat`; the mic button records with the browser's `MediaRecorder` API and transcribes via a new `POST /api/speech-to-text` endpoint; file/video upload calls a new `POST /api/upload` endpoint — all three are real backend calls, none are simulated
+- `POST /api/upload`: documents (`.txt`/`.xlsx`) are embedded via `IngestionService`; videos (`.mp4`/`.mov`/`.avi`/`.mkv`) run through a new headless variant of the vision pipeline, `LegalVisionService.analyze_video_headless()` (YOLO + MediaPipe action/emotion detection, sampling up to 12 frames, no GUI calls — the original `process_video()` used `cv2.imshow`, which only works on a desktop with a display)
+- `POST /api/speech-to-text`: converts the browser's recorded audio (webm/opus, ogg, etc.) to a 16kHz mono WAV via `ffmpeg`, then runs the same `speech_recognition`/Google recognizer the CLI's mic uses
+- Vite's dev-server proxy forwards `/api` and `/health` to `localhost:8000`, so no CORS configuration is needed
+- `notebook/frontend_preview.ipynb`: embeds the running `localhost:5173` page in a Jupyter `IFrame`, so the same live frontend can be exercised from a notebook instead of a browser tab
+- Desktop CLI (`src/main.py`) also gained a live mic on/off toggle (`v` key) — previously the mic was only enabled/disabled once at startup
+
+**How to use:**
+```bash
+uvicorn api:app --reload --host 0.0.0.0 --port 8000   # backend
+cd frontend && npm install && npm run dev              # frontend, localhost:5173
+```
+
+---
+
+### 12. **Multilingual Support: Armenian, English, Russian**
+Chat responses, the mic's speech recognition, and crisis-safety messaging now all work in three languages instead of Armenian-only, selected via three flag buttons (🇦🇲/🇬🇧/🇷🇺) in the new web frontend.
+
+**Features:**
+- `src/agents/legal_agent.py`'s `_TEMPLATE_TEXT` (classifier-match/vector-match response templates) and `src/services/crisis_detection.py`'s crisis-response text both gained real Russian translations, alongside the existing Armenian/English ones — any other requested language code still falls back to English
+- `src/agents/legal_crew.py`'s `LANGUAGE_NAMES` now includes Russian, so the LLM-drafted RAG-fallback answer is explicitly instructed to write in Russian rather than passing the raw code through
+- `POST /api/speech-to-text` accepts a `language` field and maps it to the correct Google Speech Recognition locale (`hy-AM`/`en-US`/`ru-RU`) instead of always transcribing as Armenian
+- Fixed a related bug this surfaced: `sanitize_transcript()`'s junk-filter used to require an Armenian letter in any short transcript, which would have silently dropped valid short English/Russian mic input ("Hello", "Привет") — that check is now scoped to Armenian only
+
+**How to use:**
+Click a language button in the frontend before asking a question (typed or by voice); `/api/chat` also accepts `language` directly for non-browser integrations.
+
+---
+
+### 13. **Classifier Accuracy Fixes and a New Off-Topic Guardrail**
+Investigated real reports of the assistant answering with an unrelated matched case, follow-up questions returning the exact same answer as the previous turn, and off-topic requests being answered instead of declined. All four turned out to share root causes in `LegalCaseClassifier`/`LegalAgent`, now fixed:
+
+**Fixes:**
+- `LegalCaseClassifier.find_similar_case()`'s TF-IDF similarity threshold was raised from 0.15 to 0.35 — testing against real queries showed unrelated questions scoring 0.27-0.32 and still being treated as a confident "CLASSIFIER MATCH FOUND", which surfaced that case's real (but irrelevant) details as if they answered the question
+- The classifier-match step now matches on the current question alone instead of several turns of conversation history folded together — the old behavior meant that once a case matched on turn 1, every later reply in the session kept re-matching that same case regardless of what was actually asked next
+- `LegalAgent._generate_rag_response()` was returning "no local precedents found" whenever the vector store (150 documents) had no match, even when `court_papers_full.csv` (~2000 cases, a much larger independent corpus already retrieved via `_find_relevant_cases()`) had a real one — it now only gives up when neither source finds anything
+- The output groundedness check (flags case numbers the LLM cites that don't appear in retrieved context) was only checking against the vector-store context, so a case number legitimately grounded in the CSV corpus would have been incorrectly flagged as a hallucinated citation — it now checks both sources
+- New: `check_topic_scope()` in `src/guardrails/input_guardrails.py` blocks a conversation's opening message if it contains no legal- or mental-health-relevant keyword (`src/guardrails/in_scope_terms.txt`), for the legal chat only. Applied only to the first message in a session (not every follow-up) so a short, context-dependent follow-up isn't blocked for not repeating a keyword. This is a keyword heuristic, not a real classifier — see the file's header comment for the tradeoff.
+
+**How to use:**
+No action needed — these are behavior fixes in the existing `/api/chat` and CLI `t`/`m` paths.
+
+---
+
 ## File Structure
 
 ### New Files Created:

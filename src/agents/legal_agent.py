@@ -39,6 +39,8 @@ _TEMPLATE_TEXT = {
         "case_content_example_label": "📄 Գործի բովանդակության օրինակ",
         "vector_match_footer": "Մանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։",
         "no_local_precedents": "Համապատասխան տեղական իրավական նախադեպեր չգտնվեցին։ Խնդրում ենք համոզվել, որ ֆայլերը ճիշտ են ներբեռնված համակարգ։",
+        "off_topic_blocked": "Այս օգնականը կարող է պատասխանել միայն իրավական հարցերին և հուզական/հոգեկան առողջության հետ կապված հարցերին։ Խնդրում ենք վերաձևակերպել ձեր հարցը այս շրջանակում։",
+        "llm_unavailable": "Ինտելեկտուալ պատասխանի ծառայությունը ժամանակավորապես անհասանելի է։ Խնդրում ենք փորձել մի փոքր ուշ։",
     },
     "en": {
         "guardrail_blocked": "This request can't be processed due to inappropriate or invalid content. Please rephrase your question.",
@@ -64,6 +66,8 @@ _TEMPLATE_TEXT = {
         "case_content_example_label": "📄 Case content excerpt",
         "vector_match_footer": "Open the link for details, or refine your search.",
         "no_local_precedents": "No relevant local legal precedents were found. Please make sure the files are correctly uploaded to the system.",
+        "off_topic_blocked": "This assistant can only help with legal questions and matters related to emotional or mental well-being. Please rephrase your question within that scope.",
+        "llm_unavailable": "The AI answer service is temporarily unavailable. Please try again in a moment.",
     },
     "ru": {
         "guardrail_blocked": "Этот запрос не может быть обработан из-за неприемлемого или недопустимого содержания. Пожалуйста, переформулируйте вопрос.",
@@ -89,6 +93,8 @@ _TEMPLATE_TEXT = {
         "case_content_example_label": "📄 Пример содержания дела",
         "vector_match_footer": "Откройте ссылку для подробностей или уточните поиск.",
         "no_local_precedents": "Соответствующие местные юридические прецеденты не найдены. Пожалуйста, убедитесь, что файлы правильно загружены в систему.",
+        "off_topic_blocked": "Этот помощник может отвечать только на юридические вопросы и вопросы, связанные с эмоциональным или психическим благополучием. Пожалуйста, переформулируйте вопрос в этих рамках.",
+        "llm_unavailable": "Сервис ответов ИИ временно недоступен. Пожалуйста, попробуйте ещё раз через некоторое время.",
     },
 }
 
@@ -272,14 +278,18 @@ class LegalAgent:
             if risk and risk["is_risk"]:
                 return get_crisis_response(language)
 
-        # Step 0c: Input guardrails (prompt injection / indecent language) —
-        # separate from crisis detection above. PII in input is flagged but
-        # not blocking (see input_guardrails.run_input_guardrails), so only
-        # prompt_injection/indecent_language actually stop the request here.
+        # Step 0c: Input guardrails (prompt injection / indecent language /
+        # off-topic) — separate from crisis detection above. PII in input is
+        # flagged but not blocking (see input_guardrails.run_input_guardrails),
+        # so only these three categories actually stop the request here.
+        # history is passed through so the off_topic check only applies on a
+        # conversation's first message — see GuardrailManager.check_input.
         if self.guardrails:
-            guard_result = self.guardrails.check_input(user_query)
+            guard_result = self.guardrails.check_input(user_query, history=history)
             if not guard_result.passed and guard_result.category in ("prompt_injection", "indecent_language"):
                 return _t('guardrail_blocked', language)
+            if not guard_result.passed and guard_result.category == "off_topic":
+                return _t('off_topic_blocked', language)
 
         # Step 1: Interactive check / Clarification hook
         if len(user_query.split()) < 3:
@@ -288,16 +298,27 @@ class LegalAgent:
         search_query = self._build_search_query(user_query, history)
 
         # Step 2: Try the Classifier first (even for voice/text)
+        #
+        # Deliberately matched on user_query alone, NOT the history-folded
+        # search_query: this step is a deterministic short-circuit that returns
+        # one specific case's real details as the entire answer. Matching it
+        # against several turns of concatenated history meant that once a case
+        # matched on turn 1, every later reply in the session kept re-matching
+        # the same case — a genuinely different follow-up question ("how much
+        # time do I have to file?") would come back with the identical
+        # first-turn case block, because the old turns' text still dominated
+        # the TF-IDF vector. search_query stays reserved for steps 3/4 below,
+        # where blending in context to widen retrieval is actually correct.
         if self.classifier:
             try:
-                matched_case = self.classifier.find_similar_case(search_query)
+                matched_case = self.classifier.find_similar_case(user_query)
                 if matched_case:
                     lawyer = matched_case.get('lawyer_name')
                     lawyer_display = lawyer if lawyer and lawyer != "(NULL)" else _t('not_specified', language)
                     case_excerpt = self._truncate_text(matched_case.get('judicial_prehistory', ''), max_chars=1200)
 
                     top_lawyer_block = ""
-                    top_lawyer = self.classifier.get_top_lawyer_for_query(search_query)
+                    top_lawyer = self.classifier.get_top_lawyer_for_query(user_query)
                     if top_lawyer and top_lawyer['approved_cases'] > 0:
                         top_lawyer_block = (
                             f"\n{_t('top_lawyer_header', language)}: {top_lawyer['lawyer_name']}\n"
@@ -306,7 +327,7 @@ class LegalAgent:
                         )
 
                     similar_cases_block = self._build_similar_cases_block(
-                        search_query, exclude_unique_number=matched_case.get('unique_number'), language=language
+                        user_query, exclude_unique_number=matched_case.get('unique_number'), language=language
                     )
 
                     return (
@@ -355,6 +376,39 @@ class LegalAgent:
         # Step 4: Fallback to general RAG synthesis
         return self._generate_rag_response(user_query, history=history, search_query=search_query, language=language)
 
+    def _direct_llm_answer(self, query: str, context: str, cases_context: str, conversation_context: str, language: str) -> str:
+        """Single direct LLM call, used as a fallback when the researcher+writer
+        crew fails (see the except block in _generate_rag_response below).
+
+        Confirmed by isolated testing that crewai's Crew/Task orchestration is
+        unreliable against this model for real (long) prompts — it returns
+        "Invalid response from LLM call - None or empty" consistently, not just
+        intermittently — while both OllamaLLM.invoke() and crewai's own LLM.call()
+        succeed against the exact same model in isolation. Most likely cause:
+        armenia-lawyer-router's context_length is 8192 tokens, and the crew's
+        two-task chain (research, then write) effectively doubles prompt usage
+        against that budget where a single call doesn't. This fallback keeps
+        context sizes smaller for the same reason. Whatever the exact cause,
+        returning a real answer here beats the old behavior of returning a
+        message that claimed to provide synthesized advice while containing
+        none.
+        """
+        from src.agents.legal_crew import LANGUAGE_NAMES
+        language_name = LANGUAGE_NAMES.get(language, language)
+        prompt = (
+            f"You are a senior Armenian legal consultant. Answer the client's question in "
+            f"{language_name}, grounded only in the context below — do not invent case numbers, "
+            "facts, or citations that aren't present here. If the context doesn't actually cover "
+            "the question, say so plainly and give general legal guidance instead.\n\n"
+            f"Conversation so far:\n{conversation_context}\n\n"
+            f"Client's question: {query}\n\n"
+            f"Retrieved precedent context:\n{self._truncate_text(context, max_chars=1500)}\n\n"
+            f"Real court case examples:\n"
+            f"{self._truncate_text(cases_context, max_chars=1000) if cases_context else 'None found.'}\n\n"
+            f"Write a clear, structured answer in {language_name}."
+        )
+        return self.llm.invoke(prompt).strip()
+
     def _generate_rag_response(self, query: str, history: list = None, search_query: str = None, language: str = DEFAULT_CRISIS_LANGUAGE) -> str:
         search_query = search_query or query
         try:
@@ -380,14 +434,21 @@ class LegalAgent:
                     cases_context += f"   Judge: {judge}\n"
                     cases_context += f"   Verdict Summary: {verdict}\n"
 
-            if not context:
+            # Only bail out when NEITHER source found anything — the vector
+            # store (chroma_legal_data) currently holds far fewer documents
+            # than the court_papers_full.csv corpus _find_relevant_cases
+            # searches (150 vs. ~2000), so gating on vector context alone
+            # was discarding perfectly good CSV-sourced case examples and
+            # returning "no precedents found" when cases_context had real
+            # matches the whole time.
+            if not context and not cases_context:
                 return _t('no_local_precedents', language)
 
             # If LLM is available, use a researcher+writer crew to generate a proper response
+            conversation_context = self._format_history_for_prompt(history)
             if self.llm:
                 try:
                     print(f"📝 Generating response via legal crew using model: {self.model_name}")
-                    conversation_context = self._format_history_for_prompt(history)
 
                     from src.agents.legal_crew import run_legal_crew
                     print("⏳ Waiting for crew response...")
@@ -402,7 +463,10 @@ class LegalAgent:
                     print(f"✅ Crew response received ({len(response)} characters)")
 
                     if self.guardrails:
-                        output_check = self.guardrails.check_output(response, context=context)
+                        # Groundedness must check against everything the writer was actually
+                        # allowed to cite from — context alone would false-positive on a case
+                        # number that's legitimately grounded in cases_context instead.
+                        output_check = self.guardrails.check_output(response, context=context + cases_context)
                         if not output_check.passed:
                             print(f"⚠️ Output guardrail flagged response ({output_check.category}): {output_check.reasons}")
                             if output_check.redacted_text:
@@ -413,20 +477,22 @@ class LegalAgent:
                 except Exception as llm_error:
                     print(f"❌ Legal crew generation error: {llm_error}")
                     print(f"   Model: {self.model_name}")
-                    # Fall back to template response if the crew fails
-                    return (
-                        "Նույնական պատմական դատական գործ չի գտնվել։ "
-                        "Տրամադրվում է սինթեզված իրավաբանական խորհրդատվություն՝ "
-                        "հիմնված բազայում առկա մոտակա իրավական կոնտեքստների վրա։"
-                    )
+                    try:
+                        print("🔁 Falling back to a direct single LLM call...")
+                        response = self._direct_llm_answer(query, context, cases_context, conversation_context, language)
+                        if self.guardrails:
+                            output_check = self.guardrails.check_output(response, context=context + cases_context)
+                            if not output_check.passed and output_check.redacted_text:
+                                response = output_check.redacted_text
+                        similar_cases_block = self._build_similar_cases_block(search_query, language=language)
+                        return response + similar_cases_block if similar_cases_block else response
+                    except Exception as fallback_error:
+                        print(f"❌ Direct LLM fallback also failed: {fallback_error}")
+                        return _t('llm_unavailable', language)
             else:
                 # If LLM is not available, return template response
                 print(f"⚠️ LLM not available, using fallback response")
-                return (
-                    "Նույնական պատմական դատական գործ չի գտնվել։ "
-                    "Տրամադրվում է սինթեզված իրավաբանական խորհրդատվություն՝ "
-                    "հիմնված բազայում առկա մոտակա իրավական կոնտեքստների վրա։"
-                )
+                return _t('llm_unavailable', language)
         except Exception as e:
             print(f"❌ RAG Response generation failed: {e}")
             import traceback

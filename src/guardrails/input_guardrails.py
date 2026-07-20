@@ -18,6 +18,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _CRISIS_TERMS = load_phrase_list(os.path.join(_THIS_DIR, "crisis_terms.txt"))
 _INDECENT_TERMS = load_phrase_list(os.path.join(_THIS_DIR, "indecent_terms.txt"))
 _INJECTION_PATTERNS = load_phrase_list(os.path.join(_THIS_DIR, "prompt_injection_patterns.txt"))
+_IN_SCOPE_TERMS = load_phrase_list(os.path.join(_THIS_DIR, "in_scope_terms.txt"))
 
 
 def check_prompt_injection(text: str) -> GuardrailResult:
@@ -43,6 +44,27 @@ def check_crisis_terms(text: str) -> GuardrailResult:
     if hits:
         return GuardrailResult(passed=False, category="crisis", reasons=[f"matched: {h}" for h in hits])
     return GuardrailResult(passed=True)
+
+
+def check_topic_scope(text: str) -> GuardrailResult:
+    """Heuristic keyword gate: passes only if `text` contains at least one
+    legal- or mental-health-relevant term (see in_scope_terms.txt) or a
+    crisis term (crisis_terms.txt is inherently mental-health-relevant).
+    NOT a real topic classifier — see in_scope_terms.txt's header for the
+    tradeoff this makes (some legitimate off-list phrasing will be flagged).
+
+    Deliberately NOT wired into run_input_guardrails()/the default checks
+    list below: it's domain-specific (only the legal chat should reject
+    off-topic requests this way) and only meaningful on a conversation's
+    first message — GuardrailManager.check_input applies both of those
+    conditions before calling this."""
+    lowered = (text or "").lower()
+    if any(term in lowered for term in _IN_SCOPE_TERMS) or any(term in lowered for term in _CRISIS_TERMS):
+        return GuardrailResult(passed=True)
+    return GuardrailResult(
+        passed=False, category="off_topic",
+        reasons=["message matched no legal or mental-health keyword"],
+    )
 
 
 def check_length(text: str, max_length: int = 8000) -> GuardrailResult:

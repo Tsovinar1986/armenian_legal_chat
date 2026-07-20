@@ -1,0 +1,152 @@
+# Heuristic keyword gate for check_topic_scope in input_guardrails.py.
+#
+# This is NOT a real topic classifier — it's a keyword-presence check, same
+# style as crisis_terms.txt/indecent_terms.txt/prompt_injection_patterns.txt
+# elsewhere in this package. If a message contains none of these (and none of
+# crisis_terms.txt, which is inherently mental-health-relevant), it's flagged
+# "off_topic" and blocked before it reaches the classifier/RAG/LLM.
+#
+# Tradeoff: a finite keyword list can't cover every legitimate legal or
+# mental-health phrasing, so this will have false positives (a real legal
+# question worded unusually gets blocked) — that's an intentional choice
+# favoring "don't answer clearly off-topic requests" over "never block a
+# legitimate one". If false positives turn out to be common in practice,
+# widen this list rather than lowering the bar to near-nothing.
+#
+# --- Legal (Armenian) ---
+օրենք
+օրենքի
+իրավունք
+իրավունքի
+իրավունքներ
+դատարան
+դատարանում
+դատավոր
+փաստաբան
+փաստաբանի
+դատական գործ
+հայց
+հայցադիմում
+պայմանագիր
+ամուսնալուծություն
+ժառանգություն
+սեփականություն
+վարձակալություն
+քրեական
+քաղաքացիական գործ
+վարչական իրավախախտում
+դատավճիռ
+բողոք
+նոտար
+իրավաբան
+խախտում
+պատասխանատվություն
+գույքի բաժանում
+ամուսնություն
+խնամակալություն
+աշխատանքից ազատում
+փոխհատուցում
+տուգանք
+դատավարություն
+վկայական
+իրավաբանական
+օրենսգիրք
+դատարանի որոշում
+# --- Legal (English) ---
+law
+legal
+court
+judge
+lawyer
+attorney
+legal case
+lawsuit
+contract
+divorce
+inheritance
+property
+lease
+rent agreement
+criminal
+civil case
+administrative violation
+verdict
+appeal
+notary
+compensation
+fine
+dismissal
+custody
+marriage
+liability
+legal rights
+regulation
+statute
+# --- Legal (Russian) ---
+закон
+право
+права
+суд
+судья
+адвокат
+юрист
+судебное дело
+иск
+договор
+развод
+наследство
+собственность
+аренда
+уголовный
+гражданское дело
+административное нарушение
+приговор
+апелляция
+нотариус
+компенсация
+штраф
+увольнение
+опека
+брак
+ответственность
+юридический
+# --- Mental health / emotional well-being (Armenian) ---
+հոգեբան
+թերապևտ
+դեպրեսիա
+անհանգստություն
+սթրես
+տխուր
+միայնակ
+հուզական
+հոգեկան առողջություն
+զգացմունք
+տրավմա
+վախ
+հոգեվիճակ
+# --- Mental health / emotional well-being (English) ---
+therapist
+psychologist
+counselor
+depression
+anxiety
+stress
+sad
+lonely
+mental health
+emotional
+trauma
+feelings
+counseling
+# --- Mental health / emotional well-being (Russian) ---
+терапевт
+психолог
+депрессия
+тревога
+стресс
+грустно
+одиноко
+психическое здоровье
+эмоциональный
+травма
+чувства

@@ -53,12 +53,22 @@ class LegalCaseClassifier:
             print(f"✅ Classifier: Indexed {len(self.past_cases)} historical cases.")
 
     def find_similar_case(self, text):
+        """Gate for the deterministic "CLASSIFIER MATCH FOUND" response (Step 2
+        in LegalAgent.get_advice), which returns the matched case's real details
+        (classification, lawyer, case excerpt) as if they directly answer the
+        question — so a weak match here reads as a confident, wrong answer, not
+        an ambiguous one. 0.35 was picked empirically: unrelated queries in this
+        corpus (3000 cases, heavy shared legal-procedure boilerplate that TF-IDF
+        doesn't discount well) were scoring 0.27-0.32 against a arbitrary
+        "closest" case and getting treated as a real match. It's still not a
+        clean separation — some genuinely matching text scores below this too —
+        but it's a meaningfully better bar than 0.15."""
         if self.tfidf_matrix is None or not self.past_cases:
             return None
         new_vec = self.vectorizer.transform([text])
         similarities = cosine_similarity(new_vec, self.tfidf_matrix).flatten()
         idx = similarities.argmax()
-        if similarities[idx] < 0.15:
+        if similarities[idx] < 0.35:
             return None
         return self.past_cases[idx]
     
@@ -83,10 +93,10 @@ class LegalCaseClassifier:
             # Get indices sorted by similarity (descending)
             sorted_indices = similarities.argsort()[::-1]
             
-            # Filter cases with similarity score > 0.1 and limit results
+            # Filter cases with similarity score > 0.2 and limit results
             similar_cases = []
             for idx in sorted_indices:
-                if similarities[idx] > 0.1 and len(similar_cases) < limit:
+                if similarities[idx] > 0.2 and len(similar_cases) < limit:
                     case = self.past_cases[idx].copy()
                     case['similarity_score'] = float(similarities[idx])
                     case['is_approved'] = self._is_approved_case(case)
