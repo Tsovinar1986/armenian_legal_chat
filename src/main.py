@@ -16,6 +16,31 @@ import cv2
 # Ensure the project root is in path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+
+def _flush_stdin():
+    """Discard input typed but not yet read.
+
+    The pynput global keyboard listener (see on_press below) doesn't consume
+    the keystroke it reacts to — the same physical keypress (e.g. 'u' to
+    trigger [u]pload) also lands in the terminal's own stdin buffer. That
+    stray character then sits there until the next input() call, which
+    silently reads it as its first character — e.g. a path typed right after
+    pressing 'u' arrives as "u/real/path", which then fails the file-exists
+    check even though the real path is correct. Call this immediately before
+    any input() prompt that follows a keyboard-triggered action.
+    """
+    try:
+        import termios
+        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+    except Exception:
+        try:
+            import msvcrt
+            while msvcrt.kbhit():
+                msvcrt.getch()
+        except ImportError:
+            pass
+
+
 keyboard = None
 try:
     from pynput import keyboard as pynput_keyboard
@@ -55,6 +80,7 @@ class LegalAIController:
 
     def handle_upload(self):
         print("\n📂 Enter full path to legal document (txt, xlsx) or video (mp4, mov):")
+        _flush_stdin()
         raw_input_path = input(">>> ")
         # Strip straight AND curly/smart quotes (macOS text substitution turns
         # ' into ‘/’ and " into “/” in some input sources) — .strip('"\'')
@@ -117,6 +143,7 @@ class LegalAIController:
 
     def handle_typed_text(self):
         print("\n⌨️ Type your legal question. Press ENTER twice to submit:")
+        _flush_stdin()
         lines = []
         while True:
             line = input(">>> " if not lines else "... ")
