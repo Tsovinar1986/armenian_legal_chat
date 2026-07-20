@@ -94,10 +94,15 @@ class LegalVisionService:
           - the heavy detection pipeline only runs every `sample_every`
             frames; frames in between just replay the last known status
             text, so playback stays smooth without re-analyzing every frame.
-        The status bar uses a larger font with a solid background bar (see
-        _draw_unicode_text's bg=True) so it stays readable over busy video
-        content instead of blending into whatever's behind it. Press 'q' to
-        stop early.
+        Emotion and per-person action labels are drawn directly on the frame
+        by process_frame itself (right next to the person they're about) —
+        that's the primary "seen in the video" display. This method only
+        adds a top-left status bar (larger font, solid background so it
+        stays readable over busy video content) for what process_frame
+        doesn't already cover: a frame with an object but no person, or
+        nothing detected yet. The terminal's final summary (see
+        handle_upload in src/main.py) is unchanged — this is purely about
+        what's visible in the frame while it plays. Press 'q' to stop early.
         """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
@@ -118,34 +123,32 @@ class LegalVisionService:
                     scale = max_width / w
                     frame = cv2.resize(frame, (max_width, int(h * scale)), interpolation=cv2.INTER_AREA)
 
+                person_in_frame = False
                 if frame_idx % sample_every == 0:
-                    frame = self.process_frame(frame)
+                    frame = self.process_frame(frame)  # draws its own per-person action + emotion labels
                     current_actions = self.state.get_actions()
                     if current_actions:
                         unique_actions.update(current_actions)
-                    last_emotion = self.state.get_emotion() or last_emotion
-                    # Object list is per-frame, not accumulated like actions —
-                    # it only ever holds something when the LAST analyzed frame
-                    # had no person in it (see process_frame), so an empty list
-                    # here means either nothing at all, or a person is present
-                    # (in which case unique_actions/last_emotion tell the story).
-                    last_objects = self.state.get_objects()
+                    current_emotion = self.state.get_emotion()
+                    if current_emotion:
+                        last_emotion = current_emotion
+                    person_in_frame = bool(current_actions or current_emotion)
+                    last_objects = self.state.get_objects() if not person_in_frame else []
 
-                # Three distinct states, not two: a person present (actions +
-                # emotion), an object but no person (object detection only —
-                # no fabricated action/emotion for something that isn't a
-                # person), or nothing detected yet.
-                if unique_actions or last_emotion:
-                    status_text = (
-                        ("Հայտնաբերված գործողություններ. " + ", ".join(sorted(unique_actions))
-                         if unique_actions else "Անձ է հայտնաբերվել")
-                        + f" | Էմոցիան. {last_emotion or '...'}"
-                    )
-                elif last_objects:
-                    status_text = "Օբյեկտների հայտնաբերում (անձ չի հայտնաբերվել). " + ", ".join(last_objects)
-                else:
-                    status_text = "Վերլուծություն..."
-                frame = self._draw_unicode_text(frame, status_text, (10, 10), font_size=24, bg=True)
+                # Only add the aggregate bar for what process_frame's own
+                # overlay doesn't already show for THIS frame: an object with
+                # no person (process_frame draws nothing in that case), or
+                # nothing detected yet. When a person is in frame, its own
+                # per-person action/emotion labels are the display — no need
+                # to duplicate that in a second, less specific line.
+                if not person_in_frame:
+                    if last_objects:
+                        status_text = "Օբյեկտների հայտնաբերում (անձ չի հայտնաբերվել). " + ", ".join(last_objects)
+                    elif unique_actions or last_emotion:
+                        status_text = f"Վերջին հայտնաբերումը. {', '.join(sorted(unique_actions)) or last_emotion}"
+                    else:
+                        status_text = "Վերլուծություն..."
+                    frame = self._draw_unicode_text(frame, status_text, (10, 10), font_size=24, bg=True)
 
                 cv2.imshow(window_name, frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
