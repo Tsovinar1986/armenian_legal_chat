@@ -42,7 +42,6 @@ class VisionClassifier:
             'walking': 'Քայլում է (Շարժման ացքը)',
             'running': 'Վազում է (Արագ շարժում)',
             'phone': 'Հեռախոսի օգտագործում (Հնարավոր ապացույցի ձայնագրում)',
-            'sitting': 'Նստած (Դատական նիստի կարգ)',
             'standing': 'Կանգնած (Հարգանքի դրսևորում)',
             'normal': 'Բնական վիճակ',
         }
@@ -88,6 +87,24 @@ class VisionClassifier:
             return self.emotion_map['surprised']
         if smile_ratio < 2.0:
             return self.emotion_map['sad']
+
+        # 'angry' was unreachable dead code here before — none of the checks
+        # above ever returned it, so no facial expression could ever be read
+        # as angry, only happy/surprised/sad/neutral. Brow furrowing (inner
+        # eyebrows pulled toward each other, the standard "AU4" cue) is a
+        # real anger signal mouth shape alone can't capture. Measured against
+        # inter-eye distance as a person/distance-independent scale reference
+        # — only overrides the neutral fallback below, not the three checks
+        # above that already have a clearer signal, and requires a fairly
+        # pronounced furrow (ratio < 0.9) to avoid the same over-eager false
+        # positives the action heuristics had — this is unvalidated on real
+        # footage, so it's deliberately conservative rather than tuned tight.
+        inner_brow_distance = self._distance(pt(55), pt(285))
+        inner_eye_distance = self._distance(pt(133), pt(362)) + 1e-6
+        brow_furrow_ratio = inner_brow_distance / inner_eye_distance
+        if brow_furrow_ratio < 0.9:
+            return self.emotion_map['angry']
+
         return self.emotion_map['neutral']
 
     def detect_emotion(self, frame):
@@ -220,8 +237,6 @@ class VisionClassifier:
         r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
         l_wrist = lm[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
         nose = lm[mp.solutions.pose.PoseLandmark.NOSE]
-        r_hip = lm[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
-        r_knee = lm[mp.solutions.pose.PoseLandmark.RIGHT_KNEE]
 
         # A "slap" heuristic used to live here: right wrist above nose level,
         # roughly x-aligned with it. Removed — that's just "hand near own
@@ -246,7 +261,15 @@ class VisionClassifier:
             actions.append(self.action_map['walking'])
         if self._is_phone(lm, detected_objects):
             actions.append(self.action_map['phone'])
-        if abs(r_hip.y - r_knee.y) < 0.15:
-            actions.append(self.action_map['sitting'])
+
+        # A "sitting" heuristic used to live here: hip.y close to knee.y.
+        # Removed — measured directly against real footage and it fired
+        # almost exclusively on small/distant bounding boxes with
+        # anatomically implausible landmark positions (one case had the
+        # estimated ankle ABOVE the hip), plus at least one large "reliable"
+        # box that still misfired. Same class of problem as the slap
+        # heuristic: a single crude geometric threshold making a specific,
+        # wrong claim ("Դատական նիստի կարգ" / court-session seating) with no
+        # real corroborating signal.
 
         return actions or [self.action_map['standing']]
