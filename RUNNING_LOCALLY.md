@@ -80,12 +80,33 @@ sudo apt-get install -y nodejs
 
 **Terminal 1 — backend:**
 
+Make sure your virtual environment from step 2 is active in this terminal
+first (you'll see `(.venv)` at the start of the prompt — if not, re-run
+`source .venv/bin/activate` on macOS/Linux or `.venv\Scripts\activate` on
+Windows). Then, from the repo root:
+
 ```bash
 uvicorn api:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Wait for `Uvicorn running on http://0.0.0.0:8000` before moving on — the
-first startup loads the classifier/LLM and takes a bit.
+`uvicorn` is the server that runs `api.py` (the FastAPI backend) and listens
+on port 8000; `--reload` restarts it automatically if you edit the Python
+code. You should see it print something like:
+
+```
+✅ Classifier: Indexed 3000 historical cases.
+✅ Loaded 2073 court cases from CSV
+🔄 Initializing Ollama LLM with model: armenia-lawyer-router
+✅ LLM initialized successfully with model: armenia-lawyer-router
+✅ Legal AI chat backend ready
+INFO:     Uvicorn running on http://0.0.0.0:8000
+```
+
+Wait for that last line before moving on to terminal 2 — the first startup
+loads the classifier/LLM and takes a bit. If it instead prints something
+like `Ollama LLM failed to initialize`, Ollama itself isn't running or is
+missing the `armenia-lawyer-router` model — start Ollama and confirm with
+`ollama list` before trying again.
 
 **Terminal 2 — frontend:**
 
