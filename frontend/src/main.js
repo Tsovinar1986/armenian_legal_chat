@@ -72,7 +72,7 @@ function addRow(kind, who, text, opts = {}) {
   }
 
   const bubble = document.createElement("div");
-  bubble.className = `bubble${opts.warn ? " warn" : ""}`;
+  bubble.className = `bubble${opts.warn ? " warn" : ""}${opts.videoEmbed ? " video-embed" : ""}`;
   if (opts.html) {
     bubble.innerHTML = text;
   } else {
@@ -290,6 +290,21 @@ fileInput.addEventListener("change", async () => {
 
   const isVideo = /\.(mp4|mov|avi|mkv)$/i.test(f.name);
   setComposerEnabled(false);
+
+  // Play the actual uploaded video right in the console — analysis results
+  // (actions/emotion) land as a follow-up message below it, so you can watch
+  // what was uploaded while reading what the backend found in it. This is a
+  // local object URL (the file never left the browser for this), separate
+  // from the copy POSTed to /api/upload for analysis below.
+  if (isVideo) {
+    const objectUrl = URL.createObjectURL(f);
+    addRow(
+      "system", null,
+      `<video controls playsinline preload="metadata" src="${objectUrl}"></video>`,
+      { html: true, videoEmbed: true }
+    );
+  }
+
   const working = addRow(
     "system", null,
     isVideo
