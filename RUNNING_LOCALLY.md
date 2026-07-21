@@ -42,8 +42,39 @@ pip install -r requirements.txt
 
 You'll also need:
 - **[Ollama](https://ollama.com/)** running, with the `nomic-embed-text` and `armenia-lawyer-router` models pulled — ask whoever set up your machine if these aren't already there.
-- **[Node.js](https://nodejs.org/)** (LTS) — check with `node -v`.
+- **Node.js + npm** — see below.
 - **ffmpeg on your PATH** — only needed for the mic button. macOS: `brew install ffmpeg`. Windows: see the "ffmpeg on PATH" steps in [README.md](README.md)'s Windows section — it's a manual download + PATH setup there, no Homebrew equivalent.
+
+### Installing Node.js + npm
+
+`npm` isn't installed separately — it comes bundled with Node.js, so installing Node.js is the only step. `frontend/` needs it to install and run the Vite dev server (`npm install`, `npm run dev`).
+
+**Check first** — you may already have it:
+```bash
+node -v
+npm -v
+```
+If both print a version number, skip ahead to "Run it" below. Anything Node 18+ works.
+
+**macOS:**
+```bash
+brew install node
+```
+(No Homebrew? Install it from [brew.sh](https://brew.sh/) first, or download the macOS installer from [nodejs.org](https://nodejs.org/) instead — pick the **LTS** version.)
+
+**Windows:**
+Download the **LTS** installer from [nodejs.org](https://nodejs.org/) and run it (defaults are fine — it adds `node`/`npm` to your `PATH` automatically). Or, in PowerShell, if you have `winget`:
+```powershell
+winget install OpenJS.NodeJS.LTS
+```
+Open a **new** PowerShell window afterward (PATH changes don't apply to already-open ones), then confirm with `node -v` and `npm -v`.
+
+**Linux:**
+```bash
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+(Debian/Ubuntu shown; use your distro's package manager otherwise — the key point is get an **LTS** build, not whatever ancient `nodejs` version your distro ships by default.)
 
 ## 3. Run it — two terminals
 
@@ -63,6 +94,14 @@ cd frontend
 npm install
 npm run dev
 ```
+
+- `npm install` reads `frontend/package.json` and downloads the frontend's dependencies (Vite, etc.) into `frontend/node_modules/` — only needed once, or again later if `package.json` changes. Takes a few seconds to a minute depending on your connection; it's normal to see some warnings, only actual errors matter.
+- `npm run dev` starts the Vite dev server. You'll know it's ready when you see something like:
+  ```
+  VITE ready in 300 ms
+  ➜  Local:   http://localhost:5173/
+  ```
+  Leave this running — closing the terminal (or `Ctrl+C`) stops the frontend.
 
 ## 4. Open it in your browser
 
