@@ -193,7 +193,16 @@ class VisionClassifier:
     def _pose_is_reliable(self, lm):
         indices = [getattr(mp.solutions.pose.PoseLandmark, name) for name in self._POSE_LANDMARKS_USED]
         visible = sum(1 for i in indices if lm[i].visibility >= self._MIN_LANDMARK_VISIBILITY)
-        return visible / len(indices) >= 0.7
+        # Measured directly against real footage (src/data/1.mp4, downscaled
+        # to 960px width as process_video/analyze_video_headless actually do
+        # it): genuine, usable pose estimates on this video clustered at
+        # 0.53-0.73 visible-landmark ratio, essentially never reaching 0.7 —
+        # that original threshold was rejecting almost every real frame, not
+        # just the noisy ones, which is why action detection had collapsed
+        # to just the generic "normal state" fallback instead of reporting
+        # anything real. 0.5 still rejects clearly bad poses without
+        # discarding the typical case.
+        return visible / len(indices) >= 0.5
 
     def classify_actions(self, crop, detected_objects):
         if self.mp_pose is None:
