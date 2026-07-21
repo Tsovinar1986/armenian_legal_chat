@@ -124,6 +124,16 @@ npm run dev
   ```
   Leave this running — closing the terminal (or `Ctrl+C`) stops the frontend.
 
+> **Forgot to `cd frontend`?** Running `npm install`/`npm run dev` straight
+> from the repo root used to fail with `npm ERR! code ENOENT ... no such
+> file or directory, open '.../package.json'` — there's no `package.json`
+> at the root, only in `frontend/`. That's fixed now: the repo root has its
+> own thin `package.json` that forwards to `frontend/` automatically, so
+> `npm install` / `npm run dev` work correctly from *either* the repo root
+> or `frontend/`. If you still see that exact ENOENT error, you're on an
+> older copy of the repo (or a `.zip` snapshot) — `git pull`, or re-download
+> if it's a zip, to pick up the fix.
+
 ### Running this from PyCharm on Windows
 
 Same two commands as above — PyCharm just gives you a place to run them
