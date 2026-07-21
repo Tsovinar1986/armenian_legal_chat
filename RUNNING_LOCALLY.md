@@ -124,6 +124,37 @@ npm run dev
   ```
   Leave this running — closing the terminal (or `Ctrl+C`) stops the frontend.
 
+### Running this from PyCharm on Windows
+
+Same two commands as above — PyCharm just gives you a place to run them
+without leaving the IDE. **Backend first, always** — the frontend expects it
+to already be listening on port 8000.
+
+**Two terminals (recommended — matches the two-terminal setup above exactly):**
+
+1. Open the integrated terminal: **View → Tool Windows → Terminal** (or `Alt+F12`). This opens a PowerShell tab at the project root, with your `.venv` usually already active automatically if PyCharm's Python interpreter is set to it (look for `(.venv)` in the prompt — if it's not there, run `.venv\Scripts\activate` yourself).
+2. In that first tab, start the backend:
+   ```powershell
+   uvicorn api:app --reload --host 0.0.0.0 --port 8000
+   ```
+3. Click the **+** at the top of the Terminal tool window to open a *second*, independent tab (the first keeps running the backend in the background — don't close it or press `Ctrl+C` in it).
+4. In that second tab:
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
+5. Open **http://localhost:5173** in your browser — same as any other setup.
+
+**One terminal instead (if you'd rather not juggle two tabs):** run the backend as a background job in a single PowerShell terminal, so the same tab is free to run the frontend afterward:
+```powershell
+Start-Job -Name backend -ScriptBlock { uvicorn api:app --host 0.0.0.0 --port 8000 }
+cd frontend
+npm install
+npm run dev
+```
+`Start-Job` launches the backend in the background and immediately returns control of the terminal — check on it anytime with `Receive-Job backend -Keep` (prints its output so far) or `Get-Job` (shows if it's still running). Stop it with `Stop-Job backend` when you're done (or just close the terminal — background jobs die with their parent session). The tradeoff versus two tabs: you don't see the backend's live log output by default, only on request via `Receive-Job`, which makes spotting a crash less obvious — worth it only if you specifically want to avoid a second tab.
+
 ## 4. Open it in your browser
 
 **http://localhost:5173**
