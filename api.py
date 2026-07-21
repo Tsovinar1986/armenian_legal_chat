@@ -113,6 +113,9 @@ def get_legal_agent():
 
 @app.on_event("startup")
 async def warm_up_legal_agent():
+    from src.services.ollama_setup import ensure_ollama_models
+    await run_in_threadpool(ensure_ollama_models)
+
     try:
         await run_in_threadpool(get_legal_agent)
         print("✅ Legal AI chat backend ready")

@@ -39,6 +39,9 @@ python-docx>=1.1
 # let anything downgrade chromadb below this once real data has been ingested.
 chromadb>=1.5.9
 langchain-ollama>=0.1
+# Used directly by src/services/ollama_setup.py (auto-pulls missing models on
+# startup) — previously only a transitive dep of langchain-ollama.
+ollama>=0.3
 
 # --- Multi-agent orchestration for legal/therapist chat (src/agents/*_crew.py) ---
 # crewai is deliberately NOT a normal line in this file. It hard-pins

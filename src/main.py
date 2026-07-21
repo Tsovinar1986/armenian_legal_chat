@@ -215,6 +215,9 @@ def main():
             except ValueError:
                 state.camera_source = source_input
 
+    from src.services.ollama_setup import ensure_ollama_models
+    ensure_ollama_models()
+
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     try:
         client = open_persistent_client("./chroma_legal_data")
