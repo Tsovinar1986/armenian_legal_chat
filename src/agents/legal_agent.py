@@ -292,8 +292,8 @@ class LegalAgent:
                 return _t('off_topic_blocked', language)
 
         # Step 1: Interactive check / Clarification hook
-        if len(user_query.split()) < 3:
-            return _t('clarify_short_query', language)
+        # if len(user_query.split()) < 3:
+        #     return _t('clarify_short_query', language)
 
         search_query = self._build_search_query(user_query, history)
 
