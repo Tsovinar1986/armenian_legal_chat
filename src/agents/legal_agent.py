@@ -8,6 +8,14 @@ from src.services.classifier import MentalHealthRiskClassifier
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response, DEFAULT_CRISIS_LANGUAGE
 from src.guardrails import GuardrailManager
 
+# src/agents/legal_agent.py -> src/agents -> src -> project root. Used to
+# anchor _load_court_cases' CSV path so it resolves regardless of the
+# process's cwd at launch -- see the matching _PROJECT_ROOT comment in
+# src/services/classifier.py for why this matters (a cwd mismatch here
+# silently empties court_cases, which starves the RAG fallback and makes
+# every query return "no local precedents found").
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Fixed template strings for the deterministic classifier-match/vector-match
 # responses (Steps 2-3 in get_advice, plus the Step 0c/1 short messages) —
 # these aren't LLM-generated, so they can't "just respond in the requested
@@ -144,7 +152,7 @@ class LegalAgent:
     
     def _load_court_cases(self):
         """Load court papers from CSV file for use as examples"""
-        csv_path = "src/data/court_papers_full.csv"
+        csv_path = os.path.join(_PROJECT_ROOT, "src", "data", "court_papers_full.csv")
         if not os.path.exists(csv_path):
             print(f"⚠️ Court papers CSV not found at {csv_path}")
             return

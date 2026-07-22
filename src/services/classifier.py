@@ -4,10 +4,21 @@ from bs4 import BeautifulSoup
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+# src/services/classifier.py -> src/services -> src -> project root. Callers
+# (api.py, src/main.py) pass data_folder="src/data" as a bare relative
+# string, which only resolves correctly if the process happens to be
+# launched with the project root as its cwd. Anchoring relative paths here
+# instead makes loading work regardless of the caller's cwd (an IDE run
+# config, a different launch script, etc.) -- previously a cwd mismatch
+# silently left past_cases empty (just a printed warning, no exception),
+# which made the classifier never match anything and every query fall
+# through to the "no local precedents found" RAG fallback.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 class LegalCaseClassifier:
     def __init__(self, data_folder="data"):
-        self.data_folder = data_folder
+        self.data_folder = data_folder if os.path.isabs(data_folder) else os.path.join(_PROJECT_ROOT, data_folder)
         self.past_cases = []
         # stop_words="english": the corpus is almost entirely Armenian, but a
         # handful of cases embed English boilerplate (foreign-party names,
@@ -283,7 +294,7 @@ class LegalCaseClassifier:
         return sorted_lawyers
 
 
-DEFAULT_MENTAL_HEALTH_QA_CSV = "src/data/student_mh_counseling_100k_with_label_column.csv"
+DEFAULT_MENTAL_HEALTH_QA_CSV = os.path.join(_PROJECT_ROOT, "src", "data", "student_mh_counseling_100k_with_label_column.csv")
 
 
 class MentalHealthQAClassifier:

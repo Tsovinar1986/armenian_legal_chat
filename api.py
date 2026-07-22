@@ -29,6 +29,16 @@ from src.guardrails import GuardrailManager
 
 app = FastAPI(title="Armenian Legal Portal", version="1.0.0")
 
+# api.py lives at the project root, so this file's own directory *is* the
+# project root -- anchoring the chroma path here (instead of the bare
+# relative "./chroma_legal_data") means the vector store resolves to the
+# same directory regardless of the process's cwd at launch (an IDE run
+# config, a different launch script, etc. can all set cwd to something
+# other than the project root). A cwd mismatch previously didn't error --
+# chromadb's PersistentClient just creates a fresh empty directory wherever
+# it's pointed -- so every similarity search silently returned nothing.
+_PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 portal_store.init_db()
 
 # Payments (Apple Pay / Google Pay / card) via Stripe. Both keys must come from
@@ -101,7 +111,7 @@ def get_legal_agent():
         from src.db.vector_store import ChromaVectorStore, open_persistent_client
 
         embeddings = OllamaEmbeddings(model="nomic-embed-text")
-        client = open_persistent_client("./chroma_legal_data")
+        client = open_persistent_client(os.path.join(_PROJECT_ROOT, "chroma_legal_data"))
         vector_db = ChromaVectorStore(client=client, collection_name="company_legal_cases", embeddings=embeddings)
         classifier_service = LegalCaseClassifier(data_folder="src/data")
         _legal_agent = LegalAgent(CompanyLegalRepo(vector_db), SystemState(), classifier=classifier_service)

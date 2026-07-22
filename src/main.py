@@ -14,7 +14,8 @@ import unicodedata
 import cv2
 
 # Ensure the project root is in path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(_PROJECT_ROOT)
 
 
 def _flush_stdin():
@@ -220,7 +221,7 @@ def main():
 
     embeddings = OllamaEmbeddings(model="nomic-embed-text")
     try:
-        client = open_persistent_client("./chroma_legal_data")
+        client = open_persistent_client(os.path.join(_PROJECT_ROOT, "chroma_legal_data"))
     except RuntimeError as exc:
         print(f"❌ {exc}")
         sys.exit(1)
