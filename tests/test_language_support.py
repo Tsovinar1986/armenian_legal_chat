@@ -64,13 +64,17 @@ class ChatLanguageParamTests(unittest.TestCase):
         data = res.json()
         self.assertEqual(data["response"], CRISIS_RESPONSE_EN)
 
-    def test_therapist_chat_passes_language_to_crew(self):
+    def test_therapist_chat_passes_language_to_direct_llm(self):
         mock_qa = MagicMock()
+        mock_qa.find_similar_answer.return_value = None
+        mock_agent = MagicMock()
+        mock_agent.risk_classifier.classify_mental_health_risk.return_value = {"is_risk": False}
+        mock_agent.llm.invoke.return_value = "reply"
         with patch.object(api, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
-             patch("src.agents.therapist_crew.run_therapist_crew", return_value="reply") as mock_crew:
+             patch.object(api, "get_legal_agent", return_value=mock_agent), \
+             patch("api._direct_therapist_answer", return_value="reply") as mock_direct_answer:
             self.client.post("/api/therapist-chat", json={"message": "I feel stressed", "language": "hy"})
-        args, _ = mock_crew.call_args
+        args, _ = mock_direct_answer.call_args
         self.assertEqual(args[-1], "hy")
 
 

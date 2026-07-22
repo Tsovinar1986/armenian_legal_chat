@@ -32,7 +32,7 @@ python-docx>=1.1
 
 # --- RAG & LLM (src/main.py, src/agents/legal_agent.py, src/db/repository.py) ---
 # Vector search talks to chromadb directly via src/db/vector_store.py (not
-# langchain-chroma) so its chromadb version isn't pinned against crewai's below.
+# langchain-chroma).
 # IMPORTANT: chromadb's on-disk format is not backward compatible — chromadb
 # <1.2 cannot open a ./chroma_legal_data directory written by chromadb>=1.5
 # (confirmed: it crashes with a Rust panic on open, not a clean error). Do not
@@ -42,24 +42,6 @@ langchain-ollama>=0.1
 # Used directly by src/services/ollama_setup.py (auto-pulls missing models on
 # startup) — previously only a transitive dep of langchain-ollama.
 ollama>=0.3
-
-# --- Multi-agent orchestration for legal/therapist chat (src/agents/*_crew.py) ---
-# crewai is deliberately NOT a normal line in this file. It hard-pins
-# chromadb~=1.1.0 (every version checked, 1.0.0 through 1.15.2), which cannot
-# even open a chroma_legal_data directory written by chromadb>=1.5 (confirmed:
-# Rust-panic crash on open, not a clean error) — so a plain `pip install -r
-# requirements.txt` with crewai listed here is unresolvable outright (pip:
-# ResolutionImpossible) against chromadb>=1.5.9 above.
-#
-# Install it separately, AFTER the command above, with --no-deps so pip never
-# touches chromadb for it (crewai's Agent/Task/Crew/LLM classes work fine
-# alongside chromadb>=1.5.9 in practice — only crewai's own optional memory/
-# knowledge features need its pinned chromadb, and this project doesn't use them):
-#
-#   pip install --no-deps crewai==1.15.2
-#
-# Never run a plain `pip install crewai` (without --no-deps) in this venv — it
-# will silently downgrade chromadb and break access to ./chroma_legal_data.
 
 # --- Voice I/O (src/services/voice.py) ---
 SpeechRecognition>=3.10
@@ -97,3 +79,9 @@ python-multipart>=0.0.9
 # see README.md "Payments" section. Apple Pay/Google Pay require domain
 # verification in the Stripe Dashboard, which is outside this codebase.
 stripe>=9.0
+
+# --- Tests (tests/*.py) ---
+# Tests are plain unittest.TestCase classes (pytest can also collect and run
+# them directly, no separate test files needed), run with:
+#   python -m pytest tests/
+pytest>=8.0

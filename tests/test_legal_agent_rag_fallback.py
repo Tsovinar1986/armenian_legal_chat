@@ -14,46 +14,43 @@ def _make_agent(classifier=None):
     agent.model_name = "armenia-lawyer-router"
     agent.court_cases = []
     agent.export_service = MagicMock()
-    agent.llm = MagicMock()  # only truthiness is checked before the crew call
-    from src.guardrails import GuardrailManager
-    agent.guardrails = GuardrailManager(domain="legal")
+    agent.llm = MagicMock()  # only self.llm.invoke(...) is ever called
     return agent
 
 
-class LegalAgentRagFallbackCrewTests(unittest.TestCase):
-    def test_generate_rag_response_uses_legal_crew(self):
+class LegalAgentRagFallbackTests(unittest.TestCase):
+    def test_generate_rag_response_uses_direct_llm(self):
         agent = _make_agent()
         doc = MagicMock()
         doc.page_content = "Relevant precedent text."
         agent.repo.db.similarity_search_with_score.return_value = [(doc, 0.2)]
+        agent.llm.invoke.return_value = "Direct LLM-drafted Armenian answer."
 
-        with patch("src.agents.legal_crew.run_legal_crew", return_value="Crew-drafted Armenian answer.") as mock_crew:
-            result = agent._generate_rag_response("Ինչպես կարող եմ ամուսնալուծվել")
+        result = agent._generate_rag_response("Ինչպես կարող եմ ամուսնալուծվել")
 
-        self.assertIn("Crew-drafted Armenian answer.", result)
-        mock_crew.assert_called_once()
-        _, kwargs = mock_crew.call_args
-        self.assertIn("Relevant precedent text.", kwargs["context"])
+        self.assertIn("Direct LLM-drafted Armenian answer.", result)
+        agent.llm.invoke.assert_called_once()
+        (prompt,), _ = agent.llm.invoke.call_args
+        self.assertIn("Relevant precedent text.", prompt)
 
-    def test_crew_failure_falls_back_to_template_response(self):
+    def test_llm_failure_returns_unavailable_template(self):
         agent = _make_agent()
         doc = MagicMock()
         doc.page_content = "Relevant precedent text."
         agent.repo.db.similarity_search_with_score.return_value = [(doc, 0.2)]
+        agent.llm.invoke.side_effect = RuntimeError("llm failed")
 
-        with patch("src.agents.legal_crew.run_legal_crew", side_effect=RuntimeError("crew failed")):
-            result = agent._generate_rag_response("Ինչպես կարող եմ ամուսնալուծվել")
+        result = agent._generate_rag_response("Ինչպես կարող եմ ամուսնալուծվել")
 
-        self.assertIn("սինթեզված իրավաբանական խորհրդատվություն", result)
+        self.assertIn("ժամանակավորապես անհասանելի", result)
 
-    def test_no_context_returns_no_results_message_without_calling_crew(self):
+    def test_no_context_returns_no_results_message_without_calling_llm(self):
         agent = _make_agent()
         agent.repo.db.similarity_search_with_score.return_value = []
 
-        with patch("src.agents.legal_crew.run_legal_crew") as mock_crew:
-            result = agent._generate_rag_response("Ինչպես կարող եմ ամուսնալուծվել")
+        result = agent._generate_rag_response("Ինչպես կարող եմ ամուսնալուծվել")
 
-        mock_crew.assert_not_called()
+        agent.llm.invoke.assert_not_called()
         self.assertIn("չգտնվեցին", result)
 
 

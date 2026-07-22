@@ -25,7 +25,6 @@ from starlette.concurrency import run_in_threadpool
 
 from src.db import portal_store
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response
-from src.guardrails import GuardrailManager
 
 app = FastAPI(title="Armenian Legal Portal", version="1.0.0")
 
@@ -53,12 +52,43 @@ stripe.api_key = STRIPE_SECRET_KEY
 
 CONSULTATION_TYPES = {"lawyer", "therapist"}
 
-# Local Ollama model used by the therapist researcher+writer crew (src/agents/
-# therapist_crew.py) — same model the legal side uses, since there isn't a
-# separate specialized model for supportive conversation.
-THERAPIST_CREW_MODEL = "armenia-lawyer-router"
+# Display names for _direct_therapist_answer's language instruction. Any code
+# not listed here is passed through as-is — the local Ollama model's actual
+# fluency beyond Armenian/English is unverified, so this is best-effort.
+_THERAPIST_LANGUAGE_NAMES = {
+    "hy": "Armenian",
+    "en": "English",
+}
 
-_therapist_guardrails = GuardrailManager(domain="therapist")
+
+def _direct_therapist_answer(message: str, qa_classifier, llm, language: str = "en") -> str:
+    """Single direct LLM call for the therapist supportive-chat path: finds a
+    relevant past Q&A example via the existing MentalHealthQAClassifier, then
+    asks the LLM to draft a short supportive response inspired by it.
+
+    Same model as the legal side (armenia-lawyer-router) — there's no
+    separate specialized model for supportive conversation."""
+    language_name = _THERAPIST_LANGUAGE_NAMES.get(language, language)
+    match = qa_classifier.find_similar_answer(message)
+    if match:
+        found_example = (
+            f"Similar past question (topic: {match.get('label', 'unknown')}): {match['question']}\n"
+            f"Past supportive answer: {match['answer']}"
+        )
+    else:
+        found_example = "No sufficiently similar past conversation was found."
+
+    prompt = (
+        f"You are a compassionate peer-support writer. Write a short, warm, supportive response "
+        f"in {language_name} to what the person just said, using the retrieved past conversation "
+        "below as inspiration (not a script to copy verbatim). Do not diagnose. Do not claim to be "
+        "a licensed therapist. End by gently mentioning that /therapist can be used to book a real "
+        "session for anything beyond this conversation.\n\n"
+        f"The person just said: {message}\n\n"
+        f"Retrieved past conversation:\n{found_example}"
+    )
+    return llm.invoke(prompt).strip()
+
 
 room_clients: Dict[str, Set[WebSocket]] = defaultdict(set)
 # Chat history (both /api/chat and /api/therapist-chat) is persisted in
@@ -1423,14 +1453,8 @@ async def therapist_chat(request: ChatMessageRequest):
     response_text = None
     if detect_crisis_signal(user_message):
         response_text = get_crisis_response(language)
-    else:
-        guard_result = await run_in_threadpool(_therapist_guardrails.check_input, user_message)
-        if not guard_result.passed and guard_result.category in ("prompt_injection", "indecent_language"):
-            response_text = (
-                "This message can't be processed due to inappropriate or invalid content. "
-                "Please rephrase your message."
-            )
 
+    agent = None
     if response_text is None:
         try:
             agent = get_legal_agent()
@@ -1444,20 +1468,18 @@ async def therapist_chat(request: ChatMessageRequest):
     if response_text is None:
         qa_classifier = get_mental_health_qa_classifier()
         try:
-            from src.agents.therapist_crew import run_therapist_crew
-            crew_response = await run_in_threadpool(
-                run_therapist_crew, user_message, qa_classifier, THERAPIST_CREW_MODEL, language
+            if agent is None or not agent.llm:
+                raise RuntimeError("LLM unavailable")
+            llm_response = await run_in_threadpool(
+                _direct_therapist_answer, user_message, qa_classifier, agent.llm, language
             )
-            output_check = await run_in_threadpool(_therapist_guardrails.check_output, crew_response)
-            if not output_check.passed and output_check.redacted_text:
-                crew_response = output_check.redacted_text
             response_text = (
-                f"{crew_response}\n\n"
+                f"{llm_response}\n\n"
                 f"—\nThis is a supportive-conversation demo, not advice from a licensed "
                 f"therapist. For an actual consultation, visit /therapist."
             )
         except Exception as exc:
-            print(f"⚠️ Therapist crew unavailable, falling back to direct retrieval: {exc}")
+            print(f"⚠️ Direct LLM answer unavailable, falling back to retrieval: {exc}")
             match = await run_in_threadpool(qa_classifier.find_similar_answer, user_message)
             if match:
                 label_note = f" (topic: {match['label']})" if match.get("label") else ""

@@ -6,8 +6,6 @@ from langchain_ollama import OllamaLLM
 from src.services.case_export import CaseExportService
 from src.services.classifier import MentalHealthRiskClassifier
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response, DEFAULT_CRISIS_LANGUAGE
-from src.guardrails import GuardrailManager
-
 # src/agents/legal_agent.py -> src/agents -> src -> project root. Used to
 # anchor _load_court_cases' CSV path so it resolves regardless of the
 # process's cwd at launch -- see the matching _PROJECT_ROOT comment in
@@ -16,15 +14,24 @@ from src.guardrails import GuardrailManager
 # every query return "no local precedents found").
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Display names for the direct-LLM-answer prompt's language instruction. Any
+# code not listed here is passed through as-is (e.g. "fr") — the local Ollama
+# model's actual fluency in languages beyond Armenian/English is unverified,
+# so this is a best-effort instruction, not a guarantee of quality.
+_LANGUAGE_NAMES = {
+    "hy": "Armenian",
+    "en": "English",
+    "ru": "Russian",
+}
+
 # Fixed template strings for the deterministic classifier-match/vector-match
-# responses (Steps 2-3 in get_advice, plus the Step 0c/1 short messages) —
-# these aren't LLM-generated, so they can't "just respond in the requested
-# language" the way the crew-drafted answer does. hy/en/ru have real
+# responses (Steps 2-3 in get_advice, plus the Step 1 short messages) — these
+# aren't LLM-generated, so they can't "just respond in the requested
+# language" the way the drafted answer does. hy/en/ru have real
 # translations; any other requested code falls back to English, same
 # convention as get_crisis_response in crisis_detection.py.
 _TEMPLATE_TEXT = {
     "hy": {
-        "guardrail_blocked": "Հարցումը չի կարող մշակվել՝ անհարմար կամ անվավեր բովանդակության պատճառով։ Խնդրում ենք վերաձևակերպել ձեր հարցը։",
         "clarify_short_query": "Խնդրում եմ, նկարագրեք ձեր իրավական խնդիրը մի փոքր ավելի մանրամասն, որպեսզի կարողանամ ճշգրիտ նախադեպեր գտնել:",
         "not_specified": "Նշված չէ",
         "classifier_match_header": "🎯 [CLASSIFIER MATCH FOUND]",
@@ -47,11 +54,9 @@ _TEMPLATE_TEXT = {
         "case_content_example_label": "📄 Գործի բովանդակության օրինակ",
         "vector_match_footer": "Մանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։",
         "no_local_precedents": "Համապատասխան տեղական իրավական նախադեպեր չգտնվեցին։ Խնդրում ենք համոզվել, որ ֆայլերը ճիշտ են ներբեռնված համակարգ։",
-        "off_topic_blocked": "Այս օգնականը կարող է պատասխանել միայն իրավական հարցերին և հուզական/հոգեկան առողջության հետ կապված հարցերին։ Խնդրում ենք վերաձևակերպել ձեր հարցը այս շրջանակում։",
         "llm_unavailable": "Ինտելեկտուալ պատասխանի ծառայությունը ժամանակավորապես անհասանելի է։ Խնդրում ենք փորձել մի փոքր ուշ։",
     },
     "en": {
-        "guardrail_blocked": "This request can't be processed due to inappropriate or invalid content. Please rephrase your question.",
         "clarify_short_query": "Please describe your legal issue in a bit more detail so I can find accurate precedents.",
         "not_specified": "Not specified",
         "classifier_match_header": "🎯 [CLASSIFIER MATCH FOUND]",
@@ -74,11 +79,9 @@ _TEMPLATE_TEXT = {
         "case_content_example_label": "📄 Case content excerpt",
         "vector_match_footer": "Open the link for details, or refine your search.",
         "no_local_precedents": "No relevant local legal precedents were found. Please make sure the files are correctly uploaded to the system.",
-        "off_topic_blocked": "This assistant can only help with legal questions and matters related to emotional or mental well-being. Please rephrase your question within that scope.",
         "llm_unavailable": "The AI answer service is temporarily unavailable. Please try again in a moment.",
     },
     "ru": {
-        "guardrail_blocked": "Этот запрос не может быть обработан из-за неприемлемого или недопустимого содержания. Пожалуйста, переформулируйте вопрос.",
         "clarify_short_query": "Пожалуйста, опишите Вашу юридическую проблему немного подробнее, чтобы я мог найти точные прецеденты.",
         "not_specified": "Не указано",
         "classifier_match_header": "🎯 [НАЙДЕНО СОВПАДЕНИЕ КЛАССИФИКАТОРА]",
@@ -101,7 +104,6 @@ _TEMPLATE_TEXT = {
         "case_content_example_label": "📄 Пример содержания дела",
         "vector_match_footer": "Откройте ссылку для подробностей или уточните поиск.",
         "no_local_precedents": "Соответствующие местные юридические прецеденты не найдены. Пожалуйста, убедитесь, что файлы правильно загружены в систему.",
-        "off_topic_blocked": "Этот помощник может отвечать только на юридические вопросы и вопросы, связанные с эмоциональным или психическим благополучием. Пожалуйста, переформулируйте вопрос в этих рамках.",
         "llm_unavailable": "Сервис ответов ИИ временно недоступен. Пожалуйста, попробуйте ещё раз через некоторое время.",
     },
 }
@@ -129,9 +131,6 @@ class LegalAgent:
         # Second, heavier crisis-screening signal (see Step 0b in get_advice) —
         # cheap to construct, only trains its Random Forest lazily on first use.
         self.risk_classifier = MentalHealthRiskClassifier()
-        # PII/prompt-injection/indecent-language/RAG-groundedness checks —
-        # separate from and additional to the crisis-detection pipeline above.
-        self.guardrails = GuardrailManager(domain="legal")
 
         # Load court papers data from CSV
         self._load_court_cases()
@@ -260,7 +259,7 @@ class LegalAgent:
             fallback path real conversational context.
         :param language: short language code ("hy", "en", ...) for every
             response path: the crisis response, the LLM-drafted RAG-fallback
-            answer (see src/agents/legal_crew.py), and the deterministic
+            answer (see _direct_llm_answer), and the deterministic
             classifier-match/vector-match templates (Steps 2-3, via the
             module-level _TEMPLATE_TEXT/_t helper). hy/en have real
             translations for the templates; any other code falls back to
@@ -285,19 +284,6 @@ class LegalAgent:
             risk = self.risk_classifier.classify_mental_health_risk(user_query)
             if risk and risk["is_risk"]:
                 return get_crisis_response(language)
-
-        # Step 0c: Input guardrails (prompt injection / indecent language /
-        # off-topic) — separate from crisis detection above. PII in input is
-        # flagged but not blocking (see input_guardrails.run_input_guardrails),
-        # so only these three categories actually stop the request here.
-        # history is passed through so the off_topic check only applies on a
-        # conversation's first message — see GuardrailManager.check_input.
-        if self.guardrails:
-            guard_result = self.guardrails.check_input(user_query, history=history)
-            if not guard_result.passed and guard_result.category in ("prompt_injection", "indecent_language"):
-                return _t('guardrail_blocked', language)
-            if not guard_result.passed and guard_result.category == "off_topic":
-                return _t('off_topic_blocked', language)
 
         # Step 1: Interactive check / Clarification hook
         # if len(user_query.split()) < 3:
@@ -385,24 +371,19 @@ class LegalAgent:
         return self._generate_rag_response(user_query, history=history, search_query=search_query, language=language)
 
     def _direct_llm_answer(self, query: str, context: str, cases_context: str, conversation_context: str, language: str) -> str:
-        """Single direct LLM call, used as a fallback when the researcher+writer
-        crew fails (see the except block in _generate_rag_response below).
+        """Single direct LLM call that drafts the RAG-fallback answer.
 
-        Confirmed by isolated testing that crewai's Crew/Task orchestration is
-        unreliable against this model for real (long) prompts — it returns
-        "Invalid response from LLM call - None or empty" consistently, not just
-        intermittently — while both OllamaLLM.invoke() and crewai's own LLM.call()
-        succeed against the exact same model in isolation. Most likely cause:
-        armenia-lawyer-router's context_length is 8192 tokens, and the crew's
-        two-task chain (research, then write) effectively doubles prompt usage
-        against that budget where a single call doesn't. This fallback keeps
-        context sizes smaller for the same reason. Whatever the exact cause,
-        returning a real answer here beats the old behavior of returning a
-        message that claimed to provide synthesized advice while containing
-        none.
+        Previously this ran behind a crewai researcher+writer crew, with this
+        as the fallback for when that crew failed. The crew's two-task chain
+        (research, then write) was confirmed unreliable for real (long)
+        prompts against this model — it consistently returned "Invalid
+        response from LLM call - None or empty", most likely because
+        armenia-lawyer-router's context_length is 8192 tokens and the crew's
+        two calls effectively doubled prompt usage against that budget where
+        a single call doesn't. crewai has since been removed entirely; this
+        is now the only path.
         """
-        from src.agents.legal_crew import LANGUAGE_NAMES
-        language_name = LANGUAGE_NAMES.get(language, language)
+        language_name = _LANGUAGE_NAMES.get(language, language)
         prompt = (
             f"You are a senior Armenian legal consultant. Answer the client's question in "
             f"{language_name}, grounded only in the context below — do not invent case numbers, "
@@ -452,51 +433,20 @@ class LegalAgent:
             if not context and not cases_context:
                 return _t('no_local_precedents', language)
 
-            # If LLM is available, use a researcher+writer crew to generate a proper response
+            # If LLM is available, generate a response with a single direct call
             conversation_context = self._format_history_for_prompt(history)
             if self.llm:
                 try:
-                    print(f"📝 Generating response via legal crew using model: {self.model_name}")
-
-                    from src.agents.legal_crew import run_legal_crew
-                    print("⏳ Waiting for crew response...")
-                    response = run_legal_crew(
-                        query=query,
-                        context=context,
-                        cases_context=cases_context,
-                        conversation_context=conversation_context,
-                        model_name=self.model_name,
-                        language=language,
-                    )
-                    print(f"✅ Crew response received ({len(response)} characters)")
-
-                    if self.guardrails:
-                        # Groundedness must check against everything the writer was actually
-                        # allowed to cite from — context alone would false-positive on a case
-                        # number that's legitimately grounded in cases_context instead.
-                        output_check = self.guardrails.check_output(response, context=context + cases_context)
-                        if not output_check.passed:
-                            print(f"⚠️ Output guardrail flagged response ({output_check.category}): {output_check.reasons}")
-                            if output_check.redacted_text:
-                                response = output_check.redacted_text
+                    print(f"📝 Generating response via direct LLM call using model: {self.model_name}")
+                    response = self._direct_llm_answer(query, context, cases_context, conversation_context, language)
+                    print(f"✅ LLM response received ({len(response)} characters)")
 
                     similar_cases_block = self._build_similar_cases_block(search_query, language=language)
                     return response + similar_cases_block if similar_cases_block else response
                 except Exception as llm_error:
-                    print(f"❌ Legal crew generation error: {llm_error}")
+                    print(f"❌ LLM generation error: {llm_error}")
                     print(f"   Model: {self.model_name}")
-                    try:
-                        print("🔁 Falling back to a direct single LLM call...")
-                        response = self._direct_llm_answer(query, context, cases_context, conversation_context, language)
-                        if self.guardrails:
-                            output_check = self.guardrails.check_output(response, context=context + cases_context)
-                            if not output_check.passed and output_check.redacted_text:
-                                response = output_check.redacted_text
-                        similar_cases_block = self._build_similar_cases_block(search_query, language=language)
-                        return response + similar_cases_block if similar_cases_block else response
-                    except Exception as fallback_error:
-                        print(f"❌ Direct LLM fallback also failed: {fallback_error}")
-                        return _t('llm_unavailable', language)
+                    return _t('llm_unavailable', language)
             else:
                 # If LLM is not available, return template response
                 print(f"⚠️ LLM not available, using fallback response")

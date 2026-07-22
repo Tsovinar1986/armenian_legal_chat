@@ -101,19 +101,22 @@ class TherapistChatTests(unittest.TestCase):
         self.assertIn("911", data["response"])
         mock_get_qa.assert_not_called()
 
-    def test_non_crisis_message_uses_therapist_crew(self):
+    def test_non_crisis_message_uses_direct_llm(self):
         mock_qa = MagicMock()
+        mock_qa.find_similar_answer.return_value = None
+        mock_agent = MagicMock()
+        mock_agent.risk_classifier.classify_mental_health_risk.return_value = {"is_risk": False}
+        mock_agent.llm.invoke.return_value = "A warm supportive reply."
         with patch.object(api, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
-             patch("src.agents.therapist_crew.run_therapist_crew", return_value="A warm supportive reply.") as mock_crew:
+             patch.object(api, "get_legal_agent", return_value=mock_agent):
             res = self.client.post("/api/therapist-chat", json={"message": "I feel stressed about my exams"})
         data = res.json()
         self.assertTrue(data["success"])
         self.assertIn("A warm supportive reply.", data["response"])
         self.assertIn("not advice from a licensed therapist", data["response"])
-        mock_crew.assert_called_once()
+        mock_agent.llm.invoke.assert_called_once()
 
-    def test_crew_failure_falls_back_to_direct_retrieval(self):
+    def test_llm_unavailable_falls_back_to_direct_retrieval(self):
         mock_qa = MagicMock()
         mock_qa.find_similar_answer.return_value = {
             "question": "I feel stressed about exams",
@@ -122,8 +125,7 @@ class TherapistChatTests(unittest.TestCase):
             "similarity_score": 0.8,
         }
         with patch.object(api, "get_mental_health_qa_classifier", return_value=mock_qa), \
-             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")), \
-             patch("src.agents.therapist_crew.run_therapist_crew", side_effect=RuntimeError("crew failed")):
+             patch.object(api, "get_legal_agent", side_effect=RuntimeError("no ollama")):
             res = self.client.post("/api/therapist-chat", json={"message": "I feel stressed about my exams"})
         data = res.json()
         self.assertTrue(data["success"])
