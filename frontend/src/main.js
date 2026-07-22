@@ -347,4 +347,214 @@ document.addEventListener("keydown", (e) => {
 
 typedInput.placeholder = PLACEHOLDERS[currentLanguage];
 checkBackend();
+
+// ---------- Account: sign in / register / forgot password, via /api/auth/* ----------
+// Same backend endpoints as api.py's own portal UI (src/db/portal_store.py),
+// reached here through Vite's /api proxy — see vite.config.js.
+
+const AUTH_TOKEN_KEY = "legalui.authToken";
+const AUTH_USER_KEY = "legalui.authUser";
+const ROLE_LABELS = { individual: "Individual", lawyer: "Lawyer", therapist: "Therapist" };
+
+const accountPill = document.getElementById("accountPill");
+const accountStatus = document.getElementById("accountStatus");
+const authOverlay = document.getElementById("authOverlay");
+const authClose = document.getElementById("authClose");
+const authMessage = document.getElementById("authMessage");
+const roleToggle = document.getElementById("roleToggle");
+const authTabs = document.getElementById("authTabs");
+const panelAccount = document.getElementById("panelAccount");
+const roleToggleButtons = document.querySelectorAll("#roleToggle button");
+const roleLabelEls = document.querySelectorAll(".roleLabel");
+const paymentsLink = document.getElementById("paymentsLink");
+
+let selectedRole = "individual";
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || null;
+let authUser = null;
+try {
+  authUser = JSON.parse(localStorage.getItem(AUTH_USER_KEY) || "null");
+} catch {
+  authUser = null;
+}
+
+function updateAccountPill() {
+  accountStatus.textContent = authUser ? `${authUser.name} · ${ROLE_LABELS[authUser.role] || authUser.role}` : "Sign in";
+  accountPill.classList.toggle("signed-in", !!authUser);
+}
+
+const authTabButtons = document.querySelectorAll("#authTabs button");
+const authPanels = {
+  quick: document.getElementById("panelQuick"),
+  signin: document.getElementById("panelSignin"),
+  register: document.getElementById("panelRegister"),
+  payments: document.getElementById("panelPayments"),
+};
+
+function setAuthTab(tab) {
+  authTabButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
+  Object.entries(authPanels).forEach(([key, panel]) => { panel.hidden = key !== tab; });
+}
+authTabButtons.forEach((btn) => btn.addEventListener("click", () => setAuthTab(btn.dataset.tab)));
+
+function setRole(role) {
+  selectedRole = role;
+  roleToggleButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.role === role));
+  roleLabelEls.forEach((el) => { el.textContent = ROLE_LABELS[role]; });
+  paymentsLink.href = `/pay?consultation_type=${role === "therapist" ? "therapist" : "lawyer"}`;
+}
+roleToggleButtons.forEach((btn) => btn.addEventListener("click", () => setRole(btn.dataset.role)));
+
+function openAuthModal() {
+  authMessage.textContent = "";
+  authOverlay.hidden = false;
+  if (authUser) {
+    roleToggle.hidden = true;
+    authTabs.hidden = true;
+    Object.values(authPanels).forEach((p) => { p.hidden = true; });
+    document.getElementById("accountName").textContent = authUser.name;
+    document.getElementById("accountRole").textContent = ROLE_LABELS[authUser.role] || authUser.role;
+    panelAccount.hidden = false;
+  } else {
+    roleToggle.hidden = false;
+    authTabs.hidden = false;
+    panelAccount.hidden = true;
+    setAuthTab("signin");
+  }
+}
+function closeAuthModal() {
+  authOverlay.hidden = true;
+}
+
+accountPill.addEventListener("click", openAuthModal);
+accountPill.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openAuthModal(); }
+});
+authClose.addEventListener("click", closeAuthModal);
+authOverlay.addEventListener("click", (e) => {
+  if (e.target === authOverlay) closeAuthModal();
+});
+
+document.getElementById("quickChatBtn").addEventListener("click", () => {
+  closeAuthModal();
+  typedInput.focus();
+});
+
+const forgotPanel = document.getElementById("forgotPanel");
+const forgotMessage = document.getElementById("forgotMessage");
+document.getElementById("forgotPasswordLink").addEventListener("click", () => {
+  forgotPanel.hidden = !forgotPanel.hidden;
+});
+document.getElementById("sendOtpBtn").addEventListener("click", async () => {
+  const identifier = document.getElementById("forgotIdentifier").value.trim();
+  if (!identifier) { forgotMessage.textContent = "Enter your email or phone first."; return; }
+  try {
+    const res = await fetch("/api/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, channel: "email" }),
+    });
+    const data = await res.json();
+    forgotMessage.textContent = data.message;
+  } catch (err) {
+    forgotMessage.textContent = `⚠️ ${err.message}`;
+  }
+});
+document.getElementById("resetPasswordBtn").addEventListener("click", async () => {
+  const identifier = document.getElementById("forgotIdentifier").value.trim();
+  const otp = document.getElementById("resetOtp").value.trim();
+  const new_password = document.getElementById("resetNewPassword").value;
+  if (!identifier || !otp || !new_password) { forgotMessage.textContent = "Fill in email/phone, OTP, and new password."; return; }
+  try {
+    const res = await fetch("/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, otp, new_password }),
+    });
+    const data = await res.json();
+    forgotMessage.textContent = data.message;
+  } catch (err) {
+    forgotMessage.textContent = `⚠️ ${err.message}`;
+  }
+});
+
+function persistSession(user, token) {
+  authUser = user;
+  authToken = token;
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  updateAccountPill();
+}
+
+document.getElementById("registerForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = {
+    name: document.getElementById("registerName").value,
+    email: document.getElementById("registerEmail").value,
+    phone_number: "",
+    password: document.getElementById("registerPassword").value,
+    role: selectedRole,
+    license_number: selectedRole === "lawyer" ? "" : null,
+  };
+  try {
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    authMessage.textContent = data.message;
+    if (data.success) {
+      persistSession(data.user, data.token);
+      closeAuthModal();
+    }
+  } catch (err) {
+    authMessage.textContent = `⚠️ ${err.message}`;
+  }
+});
+
+document.getElementById("loginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const payload = {
+    identifier: document.getElementById("loginEmail").value,
+    password: document.getElementById("loginPassword").value,
+    role: selectedRole,
+  };
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    authMessage.textContent = data.message;
+    if (data.success) {
+      persistSession(data.user, data.token);
+      closeAuthModal();
+    }
+  } catch (err) {
+    authMessage.textContent = `⚠️ ${err.message}`;
+  }
+});
+
+document.getElementById("signOutBtn").addEventListener("click", async () => {
+  try {
+    if (authToken) {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: authToken }),
+      });
+    }
+  } catch {
+    // best-effort; clear the local session regardless of network failure
+  }
+  authUser = null;
+  authToken = null;
+  localStorage.removeItem(AUTH_USER_KEY);
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  updateAccountPill();
+  closeAuthModal();
+});
+
+updateAccountPill();
 setInterval(checkBackend, 15000);
