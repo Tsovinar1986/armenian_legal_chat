@@ -214,6 +214,32 @@ async def index():
         .chat-input-row button { width: auto; padding: 0 20px; }
         .chat-header-row { display: flex; justify-content: space-between; align-items: center; }
         .chat-header-row button { width: auto; padding: 6px 12px; font-size: 12px; }
+
+        /* Auth card — deliberately its own light theme (cream/terracotta) distinct
+           from the rest of the dark console, matching the reference patient-portal
+           login design this was modeled on. */
+        .auth-card { background: #f4ead9; color: #1a1410; border: 2px solid #1a1410; border-radius: 18px; padding: 20px; }
+        .auth-card-header { text-align: center; margin-bottom: 14px; }
+        .auth-card-header .auth-icon { font-size: 30px; }
+        .auth-card-header h3 { margin: 6px 0 2px; font-size: 19px; color: #1a1410; }
+        .auth-card-header p { margin: 0; font-size: 12px; color: #7a6a58; }
+        .role-toggle { display: flex; background: #fff; border: 2px solid #1a1410; border-radius: 999px; padding: 3px; margin-bottom: 12px; }
+        .role-toggle button { flex: 1; border: none; background: transparent; color: #1a1410; padding: 8px 4px; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; margin: 0; }
+        .role-toggle button.active { background: #c17d5f; color: #fff; }
+        .auth-tabs { display: flex; margin-bottom: 12px; border-bottom: 1px solid #d8c8b4; }
+        .auth-tabs button { flex: 1; border: none; background: transparent; color: #8a7a68; padding: 8px 2px; font-size: 11px; font-weight: 700; cursor: pointer; margin: 0; border-radius: 0; border-bottom: 2px solid transparent; }
+        .auth-tabs button.active { color: #1a1410; border-bottom-color: #c17d5f; }
+        .auth-panel-title { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 15px; margin: 4px 0 12px; }
+        .auth-card form input { background: #efe2ce; border: 1px solid #d8c8b4; color: #1a1410; border-radius: 10px; }
+        .auth-card form input::placeholder { color: #8a7a68; }
+        .auth-card button[type="submit"] { background: #c17d5f; border: 2px solid #1a1410; color: #fff; font-weight: 700; border-radius: 12px; padding: 12px; margin-top: 12px; }
+        .auth-links { text-align: center; margin-top: 10px; }
+        .auth-links a { color: #1a1410; font-size: 12px; text-decoration: underline; cursor: pointer; }
+        .auth-forgot-panel { margin-top: 10px; padding-top: 10px; border-top: 1px solid #d8c8b4; }
+        .auth-quick-panel, .auth-payments-panel { text-align: center; padding: 6px 0; }
+        .auth-quick-panel p, .auth-payments-panel p { color: #7a6a58; }
+        .auth-button-link { display: inline-block; margin-top: 8px; background: #c17d5f; color: #fff; border: 2px solid #1a1410; border-radius: 12px; padding: 10px 18px; text-decoration: none; font-weight: 700; font-size: 13px; }
+        #authMessage { color: #1a1410; text-align: center; margin-top: 10px; }
       </style>
     </head>
     <body>
@@ -237,30 +263,64 @@ async def index():
         </div>
 
         <div class="grid">
-          <div class="card">
-            <h3>Sign up / Sign in</h3>
-            <p class="small">This backend supports email or phone sign-in, OTP password reset, and lawyer license registration for future web and mobile apps.</p>
-            <form id="registerForm">
-              <input id="name" placeholder="Full name" required />
-              <input id="email" type="email" placeholder="Email" required />
-              <input id="password" type="password" placeholder="Password" required />
-              <select id="role">
-                <option value="individual">Individual</option>
-                <option value="lawyer">Lawyer</option>
-                <option value="therapist">Therapist</option>
-              </select>
-              <button type="submit">Register</button>
-            </form>
-            <form id="loginForm" style="margin-top:12px;">
-              <input id="loginEmail" type="email" placeholder="Email" required />
-              <input id="loginPassword" type="password" placeholder="Password" required />
-              <select id="loginRole">
-                <option value="individual">Individual</option>
-                <option value="lawyer">Lawyer</option>
-                <option value="therapist">Therapist</option>
-              </select>
-              <button class="secondary" type="submit">Sign in</button>
-            </form>
+          <div class="auth-card">
+            <div class="auth-card-header">
+              <div class="auth-icon">⚖️</div>
+              <h3>Armenian Legal Portal</h3>
+              <p>Legal &amp; Therapy Consultations</p>
+            </div>
+
+            <div class="role-toggle" id="roleToggle">
+              <button type="button" class="active" data-role="individual">Individual</button>
+              <button type="button" data-role="lawyer">Lawyer</button>
+              <button type="button" data-role="therapist">Therapist</button>
+            </div>
+
+            <div class="auth-tabs" id="authTabs">
+              <button type="button" data-tab="quick">Quick Chat</button>
+              <button type="button" class="active" data-tab="signin">Sign In</button>
+              <button type="button" data-tab="register">Register</button>
+              <button type="button" data-tab="payments">Payments</button>
+            </div>
+
+            <div class="auth-panel" id="panelSignin">
+              <div class="auth-panel-title">❤️ <span id="signinRoleLabel">Individual</span> Sign In</div>
+              <form id="loginForm">
+                <input id="loginEmail" type="email" placeholder="Email address" required />
+                <input id="loginPassword" type="password" placeholder="Password" required />
+                <button type="submit">Sign In</button>
+              </form>
+              <div class="auth-links"><a id="forgotPasswordLink">Forgot password?</a></div>
+              <div class="auth-forgot-panel" id="forgotPanel" hidden>
+                <input id="forgotIdentifier" placeholder="Email or phone" />
+                <button type="button" id="sendOtpBtn" class="secondary">Send OTP</button>
+                <input id="resetOtp" placeholder="OTP code" style="margin-top:8px;" />
+                <input id="resetNewPassword" type="password" placeholder="New password" style="margin-top:8px;" />
+                <button type="button" id="resetPasswordBtn" class="secondary" style="margin-top:8px;">Reset password</button>
+                <div id="forgotMessage" class="small"></div>
+              </div>
+            </div>
+
+            <div class="auth-panel" id="panelRegister" hidden>
+              <div class="auth-panel-title">📝 <span id="registerRoleLabel">Individual</span> Register</div>
+              <form id="registerForm">
+                <input id="name" placeholder="Full name" required />
+                <input id="email" type="email" placeholder="Email address" required />
+                <input id="password" type="password" placeholder="Password" required />
+                <button type="submit">Register</button>
+              </form>
+            </div>
+
+            <div class="auth-panel auth-quick-panel" id="panelQuick" hidden>
+              <p class="small">Skip sign-in and ask the Legal AI a quick question below.</p>
+              <a href="#chatMessages" class="auth-button-link">Go to Quick Chat</a>
+            </div>
+
+            <div class="auth-panel auth-payments-panel" id="panelPayments" hidden>
+              <p class="small">Book &amp; pay for a real consultation.</p>
+              <a id="paymentsLink" href="/pay?consultation_type=lawyer" class="auth-button-link">Continue to Payments</a>
+            </div>
+
             <div id="authMessage" class="small"></div>
           </div>
 
@@ -477,16 +537,77 @@ async def index():
           recentBookings.innerHTML = '<strong>Recent:</strong><br/>' + data.bookingsList.map(b => `${b.title} • ${b.start_time}`).join('<br/>');
         }
 
+        // Role toggle (Individual / Lawyer / Therapist) drives both the
+        // register/login payload's `role` field and the Payments tab's link,
+        // replacing what used to be separate <select> dropdowns per form.
+        let selectedRole = 'individual';
+        const ROLE_LABELS = { individual: 'Individual', lawyer: 'Lawyer', therapist: 'Therapist' };
+        const roleToggleButtons = document.querySelectorAll('#roleToggle button');
+        const signinRoleLabel = document.getElementById('signinRoleLabel');
+        const registerRoleLabel = document.getElementById('registerRoleLabel');
+        const paymentsLink = document.getElementById('paymentsLink');
+
+        function setRole(role) {
+          selectedRole = role;
+          roleToggleButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.role === role));
+          signinRoleLabel.textContent = ROLE_LABELS[role];
+          registerRoleLabel.textContent = ROLE_LABELS[role];
+          paymentsLink.href = `/pay?consultation_type=${role === 'therapist' ? 'therapist' : 'lawyer'}`;
+        }
+        roleToggleButtons.forEach(btn => btn.addEventListener('click', () => setRole(btn.dataset.role)));
+
+        const authTabButtons = document.querySelectorAll('#authTabs button');
+        const authPanels = {
+          quick: document.getElementById('panelQuick'),
+          signin: document.getElementById('panelSignin'),
+          register: document.getElementById('panelRegister'),
+          payments: document.getElementById('panelPayments'),
+        };
+        function setAuthTab(tab) {
+          authTabButtons.forEach(btn => btn.classList.toggle('active', btn.dataset.tab === tab));
+          Object.entries(authPanels).forEach(([key, panel]) => { panel.hidden = key !== tab; });
+        }
+        authTabButtons.forEach(btn => btn.addEventListener('click', () => setAuthTab(btn.dataset.tab)));
+
+        const forgotPanel = document.getElementById('forgotPanel');
+        const forgotMessage = document.getElementById('forgotMessage');
+        document.getElementById('forgotPasswordLink').addEventListener('click', () => {
+          forgotPanel.hidden = !forgotPanel.hidden;
+        });
+        document.getElementById('sendOtpBtn').addEventListener('click', async () => {
+          const identifier = document.getElementById('forgotIdentifier').value.trim();
+          if (!identifier) { forgotMessage.textContent = 'Enter your email or phone first.'; return; }
+          const res = await fetch('/api/auth/forgot-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier, channel: 'email' })
+          });
+          const data = await res.json();
+          forgotMessage.textContent = data.message;
+        });
+        document.getElementById('resetPasswordBtn').addEventListener('click', async () => {
+          const identifier = document.getElementById('forgotIdentifier').value.trim();
+          const otp = document.getElementById('resetOtp').value.trim();
+          const new_password = document.getElementById('resetNewPassword').value;
+          if (!identifier || !otp || !new_password) { forgotMessage.textContent = 'Fill in email/phone, OTP, and new password.'; return; }
+          const res = await fetch('/api/auth/reset-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identifier, otp, new_password })
+          });
+          const data = await res.json();
+          forgotMessage.textContent = data.message;
+        });
+
         document.getElementById('registerForm').addEventListener('submit', async (event) => {
           event.preventDefault();
-          const role = document.getElementById('role').value;
           const payload = {
             name: document.getElementById('name').value,
             email: document.getElementById('email').value,
             phone_number: '',
             password: document.getElementById('password').value,
-            role,
-            license_number: role === 'lawyer' ? '' : null
+            role: selectedRole,
+            license_number: selectedRole === 'lawyer' ? '' : null
           };
           const res = await fetch('/api/auth/register', {
             method: 'POST',
@@ -504,7 +625,7 @@ async def index():
           const payload = {
             identifier: document.getElementById('loginEmail').value,
             password: document.getElementById('loginPassword').value,
-            role: document.getElementById('loginRole').value
+            role: selectedRole
           };
           const res = await fetch('/api/auth/login', {
             method: 'POST',

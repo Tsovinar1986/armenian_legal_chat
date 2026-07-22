@@ -9,7 +9,17 @@ class LegalCaseClassifier:
     def __init__(self, data_folder="data"):
         self.data_folder = data_folder
         self.past_cases = []
-        self.vectorizer = TfidfVectorizer(max_features=5000)
+        # stop_words="english": the corpus is almost entirely Armenian, but a
+        # handful of cases embed English boilerplate (foreign-party names,
+        # contract text). Without this, a common English word like "and" is
+        # *rare* corpus-wide and gets a high IDF weight, so a single accidental
+        # token overlap with an English-language query can outweigh everything
+        # else and win the argmax — e.g. "divorce ... and property issue"
+        # matched a procurement case on the sole shared token "and". Stripping
+        # English stopwords means English-language queries no longer get a
+        # spurious high-confidence match against unrelated Armenian cases;
+        # they correctly fall through to the vector-DB/RAG steps instead.
+        self.vectorizer = TfidfVectorizer(max_features=5000, stop_words="english")
         self.tfidf_matrix = None
 
         # Ավտոմատ բեռնել տվյալները ստեղծվելու պահին
@@ -42,9 +52,24 @@ class LegalCaseClassifier:
                     'unique_number': cols[0].get_text(strip=True),
                     'judicial_prehistory': cols[1].get_text(strip=True),
                     'civil_case_classifier': cols[2].get_text(strip=True),
-                    'lawyer_name': cols[4].get_text(strip=True),
+                    'lawyer_name': self._clean_lawyer_names(cols[4].get_text(strip=True)),
                     'link': f"http://www.datalex.am/?app=AppCaseSearch&case_id={cols[0].get_text(strip=True)}"
                 })
+
+    @staticmethod
+    def _clean_lawyer_names(raw: str) -> str:
+        """The DataLex export's lawyer-name column repeats the same
+        comma-separated representative list once per case party (e.g. the same
+        7 names 3x in a row), so it's deduplicated here, preserving first-seen
+        order, rather than displayed verbatim."""
+        if not raw:
+            return raw
+        seen = []
+        for name in raw.split(','):
+            name = name.strip()
+            if name and name not in seen:
+                seen.append(name)
+        return ", ".join(seen)
 
     def _train_classifier(self):
         if self.past_cases:
