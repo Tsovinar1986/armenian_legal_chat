@@ -138,7 +138,14 @@ class LegalAgent:
         # Initialize the LLM with the specified model
         try:
             print(f"🔄 Initializing Ollama LLM with model: {self.model_name}")
-            self.llm = OllamaLLM(model=self.model_name)
+            # num_predict caps a single generation at ~1000 tokens and
+            # client_kwargs bounds the HTTP call itself — without both, a
+            # model that fails to emit a stop token (observed in practice:
+            # one runaway generate call ran past 3000 tokens without
+            # stopping) hangs forever and, since Ollama serves one request
+            # at a time per model, blocks every other chat request behind
+            # it too.
+            self.llm = OllamaLLM(model=self.model_name, num_predict=1024, client_kwargs={"timeout": 120})
             print(f"✅ LLM initialized successfully with model: {self.model_name}")
         except Exception as e:
             print(f"❌ CRITICAL: Could not initialize LLM with model '{self.model_name}'")
