@@ -15,7 +15,10 @@ const langButtons = document.querySelectorAll(".lang-btn");
 const greetingBubble = document.getElementById("greetingBubble");
 const consoleTitleText = document.getElementById("consoleTitleText");
 
-const MAX_RECORDING_MS = 12000;
+// Was 12s — too short for anything but a one-line question and would
+// silently cut off longer sentences mid-word (nothing past the cap is ever
+// sent, since the recorder just stops and hands over whatever it has).
+const MAX_RECORDING_MS = 60000;
 
 // Matches api.py's STT_LANGUAGE_MAP — the same three short codes drive both
 // the chat response language and the mic/video speech-recognition locale.

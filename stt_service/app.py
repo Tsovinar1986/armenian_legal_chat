@@ -65,7 +65,19 @@ async def speech_to_text(file: UploadFile = File(...), language: Optional[str] =
             tmp_path = tmp.name
 
         model = get_model()
-        result = model.transcribe(tmp_path, language=language or None)
+        result = model.transcribe(
+            tmp_path,
+            language=language or None,
+            # Defaults (no_speech_threshold=0.6, condition_on_previous_text=True)
+            # are tuned for English and can make Whisper misjudge a quieter or
+            # lower-resource-language (e.g. Armenian) segment as silence and
+            # skip it, or drift into a repetition loop that eats the rest of
+            # the transcript — both show up as "only got part of the sentence"
+            # even though the whole thing was said clearly.
+            no_speech_threshold=0.3,
+            condition_on_previous_text=False,
+            fp16=False,
+        )
         return {
             "success": True,
             "text": (result.get("text") or "").strip(),
