@@ -8,6 +8,24 @@ import time
 import os
 
 
+# recognize_google occasionally mishears an English loanword said mid-Armenian
+# sentence as a similar-sounding but unrelated phrase (e.g. "MasterCard" -> "master
+# cartoon"). Known cases get corrected here; keyed by the mistaken phrase
+# (case-insensitive), mapped to the intended term.
+_KNOWN_MISHEARINGS = {
+    "master cartoon": "MasterCard",
+    "master car tune": "MasterCard",
+    "mastercartoon": "MasterCard",
+    "visa cart": "Visa card",
+}
+
+
+def _fix_known_mishearings(text: str) -> str:
+    for wrong, right in _KNOWN_MISHEARINGS.items():
+        text = re.sub(re.escape(wrong), right, text, flags=re.IGNORECASE)
+    return text
+
+
 def sanitize_transcript(text: str, language: str = "hy") -> str:
     """Drop empty/near-empty or junk that recognize_google occasionally
     returns for silence or noise. Shared by VoiceService (mic loop) and
@@ -23,6 +41,8 @@ def sanitize_transcript(text: str, language: str = "hy") -> str:
     cleaned = text.strip()
     if not cleaned:
         return ""
+
+    cleaned = _fix_known_mishearings(cleaned)
 
     lower = cleaned.lower()
     tokens = re.findall(r"[\wЀ-ӿ]+", lower)

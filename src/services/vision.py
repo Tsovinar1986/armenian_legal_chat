@@ -265,9 +265,20 @@ class LegalVisionService:
         finally:
             cap.release()
 
+        # Distinct emotions in the order they were first seen, collapsing
+        # consecutive repeats — e.g. [neutral, sad] means the face's
+        # expression (mouth shape is the main signal _infer_emotion_from_landmarks
+        # reads) shifted from neutral to sad at some point in the video, not
+        # just what the majority-vote final emotion happened to be.
+        emotion_changes = []
+        for e in emotion_samples:
+            if e and (not emotion_changes or emotion_changes[-1] != e):
+                emotion_changes.append(e)
+
         return {
             "actions": sorted(_confirmed_items(action_samples, min_ratio=0.25)),
             "emotion": _majority_emotion(emotion_samples),
+            "emotion_changes": emotion_changes,
             "frames_analyzed": frames_analyzed,
         }
 

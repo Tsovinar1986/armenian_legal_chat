@@ -335,6 +335,23 @@ def get_chat_messages(session_id: str, session_type: str) -> List[Dict]:
         conn.close()
 
 
+def clear_chat_messages(session_id: str, session_type: str) -> None:
+    """Wipe prior history for one session/type. Used when a new video upload
+    starts a new case in the same session_id — without this, get_chat_messages
+    would keep feeding the previous video's analysis (and any follow-up
+    discussion) into the LLM context for the new one, blending two unrelated
+    case videos together."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "DELETE FROM chat_messages WHERE session_id = ? AND session_type = ?",
+            (session_id, session_type),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def set_provider_schedule(provider_name: str, weekday: int, start_hour: int, end_hour: int, timezone: str = "UTC") -> Dict:
     """weekday: 0=Monday .. 6=Sunday (Python date.weekday() convention)."""
     conn = _connect()

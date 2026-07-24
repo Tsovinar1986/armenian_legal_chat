@@ -33,16 +33,24 @@ class VisionClassifier:
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
 
+        # Only genuinely legal-relevant actions carry a parenthetical legal
+        # gloss (kept so those still get explicitly "called out" for case
+        # review). Everyday actions (walking, standing, sitting, etc.) are
+        # reported plainly — forcing every mundane action through a legal
+        # interpretation (e.g. "standing = sign of respect") misrepresented
+        # ordinary footage that has nothing to do with a legal incident.
         self.action_map = {
             'push': 'Հրում (Ֆիզիկական ներգործություն)',
             'hand_up': 'Ձեռքի բարձրացում (Խոսքի իրավունքի խնդրանք)',
             'hands_on_hips': 'Ձեռքեր գոտկատեղին (Պաշտպանողական դիրք)',
             'pointing': 'Ցույց տալ (Ուղղորդող նշում)',
             'bent_over': 'Ծռված դիրք (Ուշադրության կենտրոնացում)',
-            'walking': 'Քայլում է (Շարժման ացքը)',
-            'running': 'Վազում է (Արագ շարժում)',
-            'phone': 'Հեռախոսի օգտագործում (Հնարավոր ապացույցի ձայնագրում)',
-            'standing': 'Կանգնած (Հարգանքի դրսևորում)',
+            'walking': 'Քայլում է',
+            'running': 'Վազում է',
+            'phone': 'Հեռախոսի օգտագործում',
+            'standing': 'Կանգնած',
+            'sitting': 'Նստած',
+            'arms_crossed': 'Ձեռքերը խաչած',
             'normal': 'Բնական վիճակ',
         }
 
@@ -181,6 +189,42 @@ class VisionClassifier:
         torso_angle = abs(nose.y - ((left_hip.y + right_hip.y) / 2))
         return ankle_distance > 0.35 and torso_angle > 0.13
 
+    def _is_sitting(self, lm):
+        r_hip = lm[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
+        l_hip = lm[mp.solutions.pose.PoseLandmark.LEFT_HIP]
+        r_knee = lm[mp.solutions.pose.PoseLandmark.RIGHT_KNEE]
+        l_knee = lm[mp.solutions.pose.PoseLandmark.LEFT_KNEE]
+        r_ankle = lm[mp.solutions.pose.PoseLandmark.RIGHT_ANKLE]
+        l_ankle = lm[mp.solutions.pose.PoseLandmark.LEFT_ANKLE]
+        hip_y = (r_hip.y + l_hip.y) / 2
+        knee_y = (r_knee.y + l_knee.y) / 2
+        ankle_y = (r_ankle.y + l_ankle.y) / 2
+        # Sitting: hips and knees at roughly the same height (thighs
+        # horizontal) while the ankles are still clearly below the knees
+        # (shins vertical) — distinguishes it from a bent-over/crouching
+        # pose, where the ankles stay close to the knees too.
+        return abs(hip_y - knee_y) < 0.1 and (ankle_y - knee_y) > 0.1
+
+    def _is_arms_crossed(self, lm):
+        r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
+        l_wrist = lm[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
+        r_shoulder = lm[mp.solutions.pose.PoseLandmark.RIGHT_SHOULDER]
+        l_shoulder = lm[mp.solutions.pose.PoseLandmark.LEFT_SHOULDER]
+        r_hip = lm[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
+        l_hip = lm[mp.solutions.pose.PoseLandmark.LEFT_HIP]
+        chest_top = min(r_shoulder.y, l_shoulder.y)
+        chest_bottom = max(r_hip.y, l_hip.y)
+        # Each wrist has crossed over to the OPPOSITE side of the body
+        # (right wrist past the left shoulder's x, and vice versa) while
+        # sitting at chest height — distinct from hands-on-hips (wrists stay
+        # on their own side, near the hips) and hand-up (wrists above head).
+        wrists_crossed = r_wrist.x < l_shoulder.x and l_wrist.x > r_shoulder.x
+        at_chest_height = (
+            chest_top - 0.05 < r_wrist.y < chest_bottom + 0.05
+            and chest_top - 0.05 < l_wrist.y < chest_bottom + 0.05
+        )
+        return wrists_crossed and at_chest_height
+
     def _is_phone(self, lm, detected_objects):
         if 'cell phone' in detected_objects:
             return True
@@ -259,6 +303,10 @@ class VisionClassifier:
             actions.append(self.action_map['running'])
         elif self._is_walking(lm):
             actions.append(self.action_map['walking'])
+        elif self._is_sitting(lm):
+            actions.append(self.action_map['sitting'])
+        if self._is_arms_crossed(lm):
+            actions.append(self.action_map['arms_crossed'])
         if self._is_phone(lm, detected_objects):
             actions.append(self.action_map['phone'])
 

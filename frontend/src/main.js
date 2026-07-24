@@ -313,12 +313,16 @@ fileInput.addEventListener("change", async () => {
       const actions = data.actions && data.actions.length ? data.actions.join(", ") : "none detected";
       const spoken = data.transcript
         ? `<br><strong>🗣️ What was said:</strong> "${data.transcript}"`
-        : "<br><strong>🗣️ What was said:</strong> no speech detected";
+        : `<br><strong>🗣️ What was said:</strong> no speech detected — based on action detection, here's what's happening: ${actions}`;
+      const emotionChanges = data.emotion_changes && data.emotion_changes.length > 1
+        ? `<br><strong>Emotion changed during video:</strong> ${data.emotion_changes.join(" → ")}`
+        : "";
       addRow(
         "bot", "AI",
         `✅ Analyzed ${data.frames_analyzed} sampled frame(s).<br>` +
         `<strong>Actions:</strong> ${actions}<br>` +
         `<strong>Emotion:</strong> ${data.emotion || "n/a"}` +
+        emotionChanges +
         spoken,
         { html: true }
       );

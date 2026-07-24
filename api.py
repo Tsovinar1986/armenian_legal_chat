@@ -1433,12 +1433,27 @@ async def upload_file(
 
         if session_id:
             actions = ", ".join(result.get("actions") or []) or "none detected"
+            emotion_changes = result.get("emotion_changes") or []
+            speech_note = (
+                f"; spoken: \"{transcript}\"" if transcript
+                # No speech to go on — fall back to describing what the action
+                # detection actually saw happening in the video instead.
+                else f"; no speech detected (based on action detection: {actions})"
+            )
+            emotion_note = (
+                f"; emotion changed during video: {' → '.join(emotion_changes)}"
+                if len(emotion_changes) > 1 else ""
+            )
             summary = (
                 f"[Uploaded video '{file.filename}' analyzed — "
                 f"actions: {actions}; emotion: {result.get('emotion') or 'n/a'}"
-                + (f"; spoken: \"{transcript}\"" if transcript else "; no speech detected")
+                + emotion_note + speech_note
                 + "]"
             )
+            # Each video upload starts a new case — clear this session's prior
+            # history first, so a follow-up chat about this video isn't fed a
+            # previous, unrelated video's analysis as context.
+            await run_in_threadpool(portal_store.clear_chat_messages, session_id, "legal")
             await run_in_threadpool(
                 portal_store.append_chat_message, session_id, "legal", "bot", summary
             )
