@@ -10,13 +10,34 @@ import os
 
 # recognize_google occasionally mishears an English loanword said mid-Armenian
 # sentence as a similar-sounding but unrelated phrase (e.g. "MasterCard" -> "master
-# cartoon"). Known cases get corrected here; keyed by the mistaken phrase
-# (case-insensitive), mapped to the intended term.
+# cartoon"), and the SAME brand name often comes back spelled a different wrong
+# way each time it's repeated in one clip (observed on a real Mastercard/Yandex
+# Go partnership press-release video: "Mastercard" alone showed up as "մաստեր
+# քարտ", "մազեր քարտ", "մասեր քարտ" and "մասն էլ քարտ" across one transcript,
+# and "Yandex Go" as "հանդեքս գոյի", "հանդեպս գոյի", "յանդեքս գովի" and "յանդեքս
+# գոլ"). Known cases get corrected here; keyed by the mistaken phrase
+# (case-insensitive), mapped to the intended term. Order matters: more specific
+# multi-word phrases must come before the shorter/standalone fallbacks they
+# contain, so e.g. "մաստեր քարտի" is fixed as a whole before the plain
+# "մաստեր քարտ" entry could otherwise chew into it and strand the "ի" suffix.
 _KNOWN_MISHEARINGS = {
     "master cartoon": "MasterCard",
     "master car tune": "MasterCard",
     "mastercartoon": "MasterCard",
     "visa cart": "Visa card",
+    "մաստեր քարտի": "Mastercard-ի",
+    "մաստեր քարտ": "Mastercard",
+    "մազեր քարտ": "Mastercard",
+    "մասեր քարտ": "Mastercard",
+    "մասն էլ քարտ": "Mastercard",
+    "հանդեքս գոյի": "Yandex Go-ի",
+    "հանդեպս գոյի": "Yandex Go-ի",
+    "յանդեքս գովի": "Yandex Go-ի",
+    "յանդեքս գոլ": "Yandex Go",
+    "յանդեքս արմենիայի": "Yandex Armenia-ի",
+    "յանդեքս": "Yandex",
+    "հանդեքս": "Yandex",
+    "yandex": "Yandex",
 }
 
 
