@@ -42,6 +42,10 @@ def sanitize_transcript(text: str, language: str = "hy") -> str:
     if not cleaned:
         return ""
 
+    # Collapse doubled/irregular whitespace recognize_google sometimes leaves
+    # between words down to a single space.
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
     cleaned = _fix_known_mishearings(cleaned)
 
     lower = cleaned.lower()

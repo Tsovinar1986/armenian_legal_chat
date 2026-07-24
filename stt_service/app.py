@@ -12,6 +12,7 @@ Run: pip install -r requirements.txt, then `python app.py`
 video containers, pulling the audio track automatically).
 """
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -55,6 +56,22 @@ def health():
     return {"status": "ok", "model": MODEL_SIZE, "model_loaded": _model is not None}
 
 
+def _join_transcript(result: dict) -> str:
+    """result["text"] is Whisper's own concatenation of its segments, which
+    doesn't reliably insert a space at every segment boundary — on longer
+    clips (more than one segment) that shows up as two words from adjacent
+    segments getting glued together (e.g. "...manwalked out..."). Rebuilding
+    the text by explicitly joining each segment's (stripped) text with a
+    single space guarantees a word boundary at every seam regardless of what
+    Whisper itself included."""
+    segments = result.get("segments") or []
+    if segments:
+        text = " ".join(seg.get("text", "").strip() for seg in segments if seg.get("text", "").strip())
+    else:
+        text = (result.get("text") or "").strip()
+    return re.sub(r"\s+", " ", text).strip()
+
+
 @app.post("/api/speech-to-text")
 async def speech_to_text(file: UploadFile = File(...), language: Optional[str] = Form(None)):
     suffix = os.path.splitext(file.filename or "")[1] or ".bin"
@@ -80,7 +97,7 @@ async def speech_to_text(file: UploadFile = File(...), language: Optional[str] =
         )
         return {
             "success": True,
-            "text": (result.get("text") or "").strip(),
+            "text": _join_transcript(result),
             "language": result.get("language"),
         }
     except Exception as exc:
