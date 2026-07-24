@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Speech-to-Text</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; max-width: 640px; margin: 48px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  p.sub { color: #666; font-size: 13.5px; margin-top: 0; }
+  .row { display: flex; gap: 10px; align-items: center; margin: 18px 0; flex-wrap: wrap; }
+  input[type="file"] { flex: 1; min-width: 200px; }
+  button { padding: 10px 18px; border-radius: 8px; border: 1px solid #ccc; background: #f7f7f7; cursor: pointer; font-weight: 600; font-size: 14px; }
+  button:hover:not(:disabled) { background: #ececec; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { color: #666; font-size: 13px; min-height: 1.2em; }
+  #result { white-space: pre-wrap; background: #f4f4f4; border: 1px solid #ddd; border-radius: 8px; padding: 14px; min-height: 80px; font-size: 15px; line-height: 1.5; }
+  video, audio { display: block; max-width: 100%; margin-top: 10px; border-radius: 8px; }
+</style>
+</head>
+<body>
+  <h1>🎙️ Speech-to-Text</h1>
+  <p class="sub">Upload a video or audio file, then transcribe it. Calls <code>POST /api/speech-to-text</code>.</p>
+
+  <div class="row">
+    <input type="file" id="fileInput" accept="audio/*,video/*" />
+  </div>
+  <div id="preview"></div>
+
+  <div class="row">
+    <button id="runBtn">▶ Transcribe</button>
+    <span id="status"></span>
+  </div>
+
+  <div id="result">(result will appear here)</div>
+
+<script>
+const fileInput = document.getElementById("fileInput");
+const preview = document.getElementById("preview");
+const runBtn = document.getElementById("runBtn");
+const statusEl = document.getElementById("status");
+const resultEl = document.getElementById("result");
+
+fileInput.addEventListener("change", () => {
+  preview.innerHTML = "";
+  const f = fileInput.files && fileInput.files[0];
+  if (!f) return;
+  const url = URL.createObjectURL(f);
+  const el = document.createElement(f.type.startsWith("video") ? "video" : "audio");
+  el.src = url;
+  el.controls = true;
+  preview.appendChild(el);
+});
+
+runBtn.addEventListener("click", async () => {
+  const f = fileInput.files && fileInput.files[0];
+  if (!f) {
+    statusEl.textContent = "Choose a video or audio file first.";
+    return;
+  }
+
+  runBtn.disabled = true;
+  statusEl.textContent = "Transcribing… (first run loads the model, can take a while)";
+  resultEl.textContent = "";
+
+  try {
+    const form = new FormData();
+    form.append("file", f);
+    const res = await fetch("/api/speech-to-text", { method: "POST", body: form });
+    const data = await res.json();
+
+    if (!res.ok || data.success === false) {
+      statusEl.textContent = "⚠️ Error: " + (data.message || res.status);
+    } else {
+      statusEl.textContent = "Detected language: " + (data.language || "?");
+      resultEl.textContent = data.text || "(no speech detected)";
+    }
+  } catch (err) {
+    statusEl.textContent = "⚠️ Request failed: " + err.message;
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
