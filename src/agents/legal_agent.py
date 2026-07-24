@@ -51,6 +51,7 @@ _TEMPLATE_TEXT = {
         "vector_match_intro": "Ես համակարգի տվյալների բազայում գտա այս իրավական հարցին համապատասխանող պատմական գործ։",
         "case_number_label": "🔢 Դատական գործի համարը",
         "datalex_link_label": "🌐 DataLex հղումը",
+        "external_search_label": "🌍 Նմանատիպ գործեր այլ աղբյուրներում",
         "case_content_example_label": "📄 Գործի բովանդակության օրինակ",
         "vector_match_footer": "Մանրամասների համար բացեք հղումը կամ երկարացրեք որոնումը։",
         "no_local_precedents": "Համապատասխան տեղական իրավական նախադեպեր չգտնվեցին։ Խնդրում ենք համոզվել, որ ֆայլերը ճիշտ են ներբեռնված համակարգ։",
@@ -76,6 +77,7 @@ _TEMPLATE_TEXT = {
         "vector_match_intro": "I found a historical case in the system's database matching this legal question.",
         "case_number_label": "🔢 Court case number",
         "datalex_link_label": "🌐 DataLex link",
+        "external_search_label": "🌍 Similar cases from other sources",
         "case_content_example_label": "📄 Case content excerpt",
         "vector_match_footer": "Open the link for details, or refine your search.",
         "no_local_precedents": "No relevant local legal precedents were found. Please make sure the files are correctly uploaded to the system.",
@@ -101,6 +103,7 @@ _TEMPLATE_TEXT = {
         "vector_match_intro": "Я нашёл в базе данных системы историческое дело, соответствующее этому юридическому вопросу.",
         "case_number_label": "🔢 Номер судебного дела",
         "datalex_link_label": "🌐 Ссылка DataLex",
+        "external_search_label": "🌍 Похожие дела из других источников",
         "case_content_example_label": "📄 Пример содержания дела",
         "vector_match_footer": "Откройте ссылку для подробностей или уточните поиск.",
         "no_local_precedents": "Соответствующие местные юридические прецеденты не найдены. Пожалуйста, убедитесь, что файлы правильно загружены в систему.",
@@ -112,6 +115,16 @@ _TEMPLATE_TEXT = {
 def _t(key: str, language: str) -> str:
     lang_dict = _TEMPLATE_TEXT.get(language) or _TEMPLATE_TEXT["en"]
     return lang_dict.get(key) or _TEMPLATE_TEXT["en"].get(key, key)
+
+
+def _build_external_search_link(query: str) -> str:
+    """Our own matched cases only ever come from the local DataLex-derived
+    dataset/vector store. This is deliberately just a plain search-engine
+    query link the user opens themselves — no API call, no fetching or
+    parsing results on our end — so similar cases from other legal sources
+    on the web are one click away instead of being limited to our dataset."""
+    encoded = urllib.parse.quote(f"{query} legal case precedent")
+    return f"https://www.google.com/search?q={encoded}"
 
 class LegalAgent:
     def __init__(self, repo, state, classifier=None, model=None):
@@ -337,6 +350,7 @@ class LegalAgent:
                         f"🔹 {_t('similar_case_label', language)}: {matched_case.get('unique_number')}\n"
                         f"🔹 {_t('link_label', language)}: {matched_case.get('link')}\n"
                         f"🔹 {_t('recommended_lawyer_label', language)}: {lawyer_display}\n"
+                        f"🔹 {_t('external_search_label', language)}: {_build_external_search_link(user_query)}\n"
                         f"{top_lawyer_block}"
                         f"{similar_cases_block}\n"
                         f"{_t('case_history_label', language)}:\n{case_excerpt}\n"
@@ -367,6 +381,10 @@ class LegalAgent:
                             response_text += f"{_t('case_number_label', language)}: {case_number}\n"
                         if datalex_link:
                             response_text += f"{_t('datalex_link_label', language)}: {datalex_link}\n"
+                        response_text += (
+                            f"{_t('external_search_label', language)}: "
+                            f"{_build_external_search_link(user_query)}\n"
+                        )
                         response_text += f"\n{_t('case_content_example_label', language)}:\n"
                         response_text += self._truncate_text(doc.page_content, max_chars=1200)
                         response_text += f"\n\n{_t('vector_match_footer', language)}"
