@@ -311,9 +311,14 @@ fileInput.addEventListener("change", async () => {
       addRow("system", null, data.message || `HTTP ${res.status}`, { warn: true });
     } else if (data.kind === "video") {
       const actions = data.actions && data.actions.length ? data.actions.join(", ") : "none detected";
-      const spoken = data.transcript
-        ? `<br><strong>🗣️ What was said:</strong> "${data.transcript}"`
-        : `<br><strong>🗣️ What was said:</strong> no speech detected — based on action detection, here's what's happening: ${actions}`;
+      let spoken;
+      if (data.transcript) {
+        spoken = `<br><strong>🗣️ What was said:</strong> "${data.transcript}"`;
+      } else if (data.has_nonspeech_audio) {
+        spoken = "<br><strong>🎵 Audio:</strong> sound was heard (possibly music or background audio), but no speech was recognized";
+      } else {
+        spoken = `<br><strong>🗣️ What was said:</strong> no speech detected — based on action detection, here's what's happening: ${actions}`;
+      }
       const emotionChanges = data.emotion_changes && data.emotion_changes.length > 1
         ? `<br><strong>Emotion changed during video:</strong> ${data.emotion_changes.join(" → ")}`
         : "";

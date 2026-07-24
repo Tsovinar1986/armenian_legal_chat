@@ -7,11 +7,13 @@
 # underlying LegalAgent/classifier/vector-store code in src/, but are two
 # separate ways to run this project — not two versions of the same file.
 # Run the CLI with: python src/main.py
+import audioop
 import json
 import os
 import subprocess
 import tempfile
 import uuid
+import wave
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Set
@@ -1372,18 +1374,39 @@ def _recognize_wav(wav_path: str, language: str) -> str:
     return sanitize_transcript(text, language=language)
 
 
-def _transcribe_video_audio(video_path: str, language: str) -> str:
+def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
+    """Cheap RMS-energy check on the extracted 16kHz mono WAV — distinguishes
+    a track that's actually silent from one that has real sound (music,
+    background noise, unclear speech, etc.) recognize_google just couldn't
+    turn into a transcript, so the caller can say "no speech, but sound was
+    heard" instead of a flat, misleading "nothing detected"."""
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            frames = wf.readframes(wf.getnframes())
+            sample_width = wf.getsampwidth()
+        return bool(frames) and audioop.rms(frames, sample_width) >= rms_threshold
+    except Exception:
+        return False
+
+
+def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool]:
     """Best-effort: extract + transcribe whatever speech is in a video's
     audio track for the upload analysis. Unlike /api/speech-to-text, a
     failure here (no audio track, unrecognized speech, no network) is not
     fatal to the upload — it just means no transcript, so this always
-    returns a string ("" on failure) instead of raising."""
+    returns a (text, has_nonspeech_audio) pair ("", False on failure) instead
+    of raising. has_nonspeech_audio is only meaningful when text is empty —
+    it tells the caller whether the track had audible content (possibly
+    music/background sound) that just didn't transcribe as speech."""
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
-        return _recognize_wav(wav_path, language)
+        text = _recognize_wav(wav_path, language)
+        has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
+        return text, has_nonspeech_audio
     except Exception:
-        return ""
+        has_nonspeech_audio = bool(wav_path and os.path.exists(wav_path) and _wav_has_audio_content(wav_path))
+        return "", has_nonspeech_audio
     finally:
         if wav_path and os.path.exists(wav_path):
             os.remove(wav_path)
@@ -1428,18 +1451,24 @@ async def upload_file(
 
         vision_service = get_vision_service()
         result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12)
-        transcript = await run_in_threadpool(_transcribe_video_audio, tmp_path, language)
+        transcript, has_nonspeech_audio = await run_in_threadpool(_transcribe_video_audio, tmp_path, language)
         result["transcript"] = transcript
+        result["has_nonspeech_audio"] = has_nonspeech_audio
 
         if session_id:
             actions = ", ".join(result.get("actions") or []) or "none detected"
             emotion_changes = result.get("emotion_changes") or []
-            speech_note = (
-                f"; spoken: \"{transcript}\"" if transcript
+            if transcript:
+                speech_note = f"; spoken: \"{transcript}\""
+            elif has_nonspeech_audio:
+                # The track has audible sound (music, background noise, etc.)
+                # but nothing recognizable as speech — worth saying explicitly
+                # instead of implying the video is silent.
+                speech_note = "; no speech detected — sound was heard (possibly music or background audio)"
+            else:
                 # No speech to go on — fall back to describing what the action
                 # detection actually saw happening in the video instead.
-                else f"; no speech detected (based on action detection: {actions})"
-            )
+                speech_note = f"; no speech detected (based on action detection: {actions})"
             emotion_note = (
                 f"; emotion changed during video: {' → '.join(emotion_changes)}"
                 if len(emotion_changes) > 1 else ""

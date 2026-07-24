@@ -243,14 +243,15 @@ class LegalVisionService:
                 if sample_indices is None or frame_idx in sample_indices:
                     results, objects_seen = self.classifier.detect_objects(frame)
                     frame_actions = []
-                    for r in results:
-                        for box in r.boxes:
-                            if self.classifier.yolo.names[int(box.cls[0])] == 'person':
-                                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                                crop = frame[y1:y2, x1:x2]
-                                if crop.size == 0:
-                                    continue
-                                frame_actions.extend(self.classifier.classify_actions(crop, objects_seen))
+                    # get_person_boxes de-dupes overlapping/nested boxes YOLO's
+                    # own NMS misses — see its docstring for why iterating
+                    # r.boxes directly here double-counted one real person's
+                    # pose as several contradictory "people".
+                    for x1, y1, x2, y2 in self.classifier.get_person_boxes(results):
+                        crop = frame[y1:y2, x1:x2]
+                        if crop.size == 0:
+                            continue
+                        frame_actions.extend(self.classifier.classify_actions(crop, objects_seen))
                     action_samples.append(frame_actions)
                     # detect_emotion() runs its own independent face search
                     # (MediaPipe FaceMesh / Haar cascade) and already returns
@@ -275,8 +276,15 @@ class LegalVisionService:
             if e and (not emotion_changes or emotion_changes[-1] != e):
                 emotion_changes.append(e)
 
+        # min_ratio=0.25 (needing recurrence in only ~3 of 12 sampled frames)
+        # was measured against real footage to still let contradictory noise
+        # through as "confirmed" fact — e.g. "running" and "pointing" each
+        # firing on a couple of noisy frames of someone just sitting/standing
+        # talking to the camera, alongside plausible ones like "phone use".
+        # 0.4 (matching process_video's own default) requires a real majority
+        # of sampled frames to agree before an action is reported.
         return {
-            "actions": sorted(_confirmed_items(action_samples, min_ratio=0.25)),
+            "actions": sorted(_confirmed_items(action_samples, min_ratio=0.4)),
             "emotion": _majority_emotion(emotion_samples),
             "emotion_changes": emotion_changes,
             "frames_analyzed": frames_analyzed,
@@ -287,19 +295,20 @@ class LegalVisionService:
         actions_in_frame = []
         person_present = False
 
-        for r in results:
-            for box in r.boxes:
-                if self.classifier.yolo.names[int(box.cls[0])] == 'person':
-                    person_present = True
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    crop = frame[y1:y2, x1:x2]
-                    if crop.size == 0:
-                        continue
+        # get_person_boxes de-dupes overlapping/nested boxes YOLO's own NMS
+        # misses — see its docstring for why iterating r.boxes directly here
+        # double-counted one real person's pose as several contradictory
+        # "people".
+        for x1, y1, x2, y2 in self.classifier.get_person_boxes(results):
+            person_present = True
+            crop = frame[y1:y2, x1:x2]
+            if crop.size == 0:
+                continue
 
-                    actions = self.classifier.classify_actions(crop, objects_seen)
-                    actions_in_frame.extend(actions)
-                    for idx, action in enumerate(actions):
-                        frame = self._draw_unicode_text(frame, action, (x1, y1 - 30 - idx * 22))
+            actions = self.classifier.classify_actions(crop, objects_seen)
+            actions_in_frame.extend(actions)
+            for idx, action in enumerate(actions):
+                frame = self._draw_unicode_text(frame, action, (x1, y1 - 30 - idx * 22))
 
         # Non-person objects (e.g. a phone) seen in a frame with nobody in it —
         # tracked separately so callers can say "object detection only" instead

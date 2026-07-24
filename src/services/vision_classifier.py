@@ -40,7 +40,6 @@ class VisionClassifier:
         # interpretation (e.g. "standing = sign of respect") misrepresented
         # ordinary footage that has nothing to do with a legal incident.
         self.action_map = {
-            'push': 'Հրում (Ֆիզիկական ներգործություն)',
             'hand_up': 'Ձեռքի բարձրացում (Խոսքի իրավունքի խնդրանք)',
             'hands_on_hips': 'Ձեռքեր գոտկատեղին (Պաշտպանողական դիրք)',
             'pointing': 'Ցույց տալ (Ուղղորդող նշում)',
@@ -65,11 +64,73 @@ class VisionClassifier:
     def detect_objects(self, frame):
         if self.yolo is None:
             return [], []
-        results = self.yolo(frame, verbose=False, classes=[0, 67])
+        # conf=0.5 (ultralytics' own default is 0.25) drops the weakest,
+        # spurious duplicate boxes outright — measured on real footage
+        # (a person filmed close-up/off-center), plain classes=[0, 67] with
+        # no confidence floor let boxes as low as 0.29 confidence through
+        # alongside the real ~0.7-0.8 confidence detections of the same
+        # person, one contributing factor to get_person_boxes' de-dup below
+        # having so much to clean up in the first place.
+        results = self.yolo(frame, verbose=False, classes=[0, 67], conf=0.5)
         detected_objects = [
             self.yolo.names[int(c)] for r in results for c in r.boxes.cls
         ]
         return results, detected_objects
+
+    def _box_iou(self, a, b):
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        if inter == 0:
+            return 0.0
+        area_a = (ax2 - ax1) * (ay2 - ay1)
+        area_b = (bx2 - bx1) * (by2 - by1)
+        return inter / (area_a + area_b - inter)
+
+    def _box_containment(self, a, b):
+        """Fraction of box a's own area that overlaps box b. Plain IoU misses
+        the case where a is much smaller than b (e.g. a tight torso-only box
+        sitting almost entirely inside a separate, much taller full-body box
+        YOLO drew for the SAME person) — IoU divides by the large union area
+        and comes out low even though a is basically a subset of b."""
+        ax1, ay1, ax2, ay2 = a
+        bx1, by1, bx2, by2 = b
+        ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+        ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+        inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        area_a = (ax2 - ax1) * (ay2 - ay1)
+        return (inter / area_a) if area_a else 0.0
+
+    def get_person_boxes(self, results):
+        """YOLO's own IoU-based NMS doesn't catch every duplicate: measured on
+        real footage, the SAME real person can get boxed twice at very
+        different scales (a tight torso-only box AND a separate, much taller
+        full-body box) — those two boxes have low IoU purely from the size
+        mismatch, even though the smaller one sits almost entirely inside the
+        larger one. Left uncaught, both boxes get pose-classified separately,
+        double-counting one person's pose as if two different people were
+        doing two different (often contradictory — e.g. one crop reads as
+        "sitting", the other as "running") things. This re-ranks all person
+        boxes by confidence and drops any lower-confidence box that
+        substantially overlaps or is contained within an already-kept one."""
+        candidates = []
+        for r in results:
+            for box in r.boxes:
+                if self.yolo.names[int(box.cls[0])] == 'person':
+                    x1, y1, x2, y2 = map(int, box.xyxy[0])
+                    candidates.append((float(box.conf[0]), (x1, y1, x2, y2)))
+        candidates.sort(key=lambda c: c[0], reverse=True)
+
+        kept = []
+        for _, box in candidates:
+            if not any(
+                self._box_iou(box, k) > 0.3 or self._box_containment(box, k) > 0.6
+                for k in kept
+            ):
+                kept.append(box)
+        return kept
 
     def _distance(self, a, b):
         return np.linalg.norm(np.array(a) - np.array(b))
@@ -289,8 +350,14 @@ class VisionClassifier:
         # person being nearby. It was firing on video with no slap in it and
         # labeling it with a specific criminal-code citation (Article 195),
         # which this kind of geometry can't actually support.
-        if r_wrist.z < -0.6 and l_wrist.z < -0.6:
-            actions.append(self.action_map['push'])
+        #
+        # A "push" heuristic used to live here too (both wrists' z well behind
+        # the body plane). Removed for the same reason: measured against real
+        # footage of someone just standing and gesturing while talking to the
+        # camera — no push in sight — it fired on 8 of 10 sampled frames.
+        # z-depth is MediaPipe's least reliable axis to begin with, and
+        # "physical force" is exactly the kind of legally-loaded claim this
+        # kind of unreliable geometry can't actually support.
         if r_wrist.y < (nose.y - 0.2) or l_wrist.y < (nose.y - 0.2):
             actions.append(self.action_map['hand_up'])
         if self._is_hands_on_hips(lm):
