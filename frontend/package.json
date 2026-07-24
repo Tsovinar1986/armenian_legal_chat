@@ -1,5 +1,5 @@
 {
-  "name": "armenian-legal-ai-frontend",
+  "name": "armenian-legal-chat-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -9,6 +9,6 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "vite": "^6.0.0"
+    "vite": "^5.4.0"
   }
 }

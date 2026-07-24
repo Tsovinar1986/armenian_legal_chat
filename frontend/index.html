@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Legal UI</title>
+  <title>Armenian Legal AI</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -12,45 +12,23 @@
 
   <header class="masthead">
     <div class="eyebrow">Vite dev server · live backend</div>
-    <h1>Legal AI, <em>talking to the real backend</em></h1>
+    <h1>Armenian Legal AI</h1>
     <p class="sub">
-      Typed questions hit <code>POST /api/chat</code>, the mic button records with
-      <code>MediaRecorder</code> and transcribes via <code>POST /api/speech-to-text</code>,
-      and uploads go to <code>POST /api/upload</code> — all real calls against the
-      FastAPI backend (proxied by Vite to <code>localhost:8000</code>), the same one
-      <code>api.py</code>'s own portal UI and the desktop CLI in <code>src/main.py</code> use.
-      The language buttons below switch both the chat response language and the mic's
-      speech-recognition locale.
+      Type or speak your question, or upload a document / video. Video uploads are
+      analyzed for actions and emotion and transcribed for anything said in them —
+      both land as a reply in the chat below.
     </p>
   </header>
-
-  <div class="onboarding" id="onboarding">
-    <div class="onboarding-head">
-      <span class="eyebrow">First time here?</span>
-      <button class="onboarding-close" id="onboardingClose" type="button" aria-label="Dismiss">✕</button>
-    </div>
-    <ol class="onboarding-steps">
-      <li><strong>Pick a language</strong> — 🇦🇲/🇬🇧/🇷🇺 below the chat, before you ask anything.</li>
-      <li><strong>Ask by typing</strong> (press <kbd>t</kbd> to focus the box) <strong>or by voice</strong> — click 🎤, speak, click again to stop.</li>
-      <li><strong>Upload a document or video</strong> with 📎 — text files get embedded into the case database, video gets analyzed for actions/emotion.</li>
-      <li>Watch the <strong>status pill</strong> top-right — if it says "backend unreachable," start the backend first (see the note at the bottom of this page).</li>
-    </ol>
-  </div>
 
   <div class="console">
     <div class="console-bar">
       <div class="console-bar-left">
         <span class="console-dot" id="liveDot"></span>
-        <span class="console-title"><span id="consoleTitleText">Հայկական իրավական օգնական</span> <span class="divider">·</span> <span class="path" id="backendPath">/api/chat</span></span>
+        <span class="console-title"><span id="consoleTitleText">Armenian Legal Assistant</span></span>
       </div>
-      <div class="pills">
-        <span class="pill account" id="accountPill" role="button" tabindex="0">
-          <span class="dot"></span><span id="accountStatus">Sign in</span>
-        </span>
-        <span class="pill" id="backendPill">
-          <span class="dot"></span><span id="backendStatus">checking backend…</span>
-        </span>
-      </div>
+      <span class="pill" id="backendPill">
+        <span class="dot"></span><span id="backendStatus">checking backend…</span>
+      </span>
     </div>
 
     <div class="transcript" id="transcript">
@@ -83,75 +61,10 @@
 
   <p class="footer-note">
     Start the backend with <code>uvicorn api:app --reload --port 8000</code> from the repo root,
-    then run <code>npm run dev</code> here. Chat depends on Ollama/chromadb; the mic needs
-    <code>ffmpeg</code> on the backend's PATH and browser microphone permission; video upload
-    loads YOLO/MediaPipe on first use, so the first one is slower than the rest.
+    then run <code>npm run dev</code> here. Chat depends on Ollama/chromadb; the mic and video
+    transcript need <code>ffmpeg</code> on the backend's PATH and browser microphone permission;
+    video analysis loads YOLO/MediaPipe on first use, so the first upload is slower than the rest.
   </p>
-
-  <div class="auth-overlay" id="authOverlay" hidden>
-    <div class="auth-modal">
-      <div class="auth-modal-head">
-        <span class="auth-modal-title">⚖️ Account</span>
-        <button class="auth-close" id="authClose" type="button" aria-label="Close">✕</button>
-      </div>
-
-      <div class="auth-panel" id="panelAccount" hidden>
-        <p class="auth-signed-in-as">Signed in as <strong id="accountName"></strong> (<span id="accountRole"></span>)</p>
-        <button type="button" class="auth-submit auth-secondary" id="signOutBtn">Sign out</button>
-      </div>
-
-      <div class="role-toggle" id="roleToggle">
-        <button type="button" class="active" data-role="individual">Individual</button>
-        <button type="button" data-role="lawyer">Lawyer</button>
-        <button type="button" data-role="therapist">Therapist</button>
-      </div>
-
-      <div class="auth-tabs" id="authTabs">
-        <button type="button" data-tab="quick">Quick Chat</button>
-        <button type="button" class="active" data-tab="signin">Sign In</button>
-        <button type="button" data-tab="register">Register</button>
-        <button type="button" data-tab="payments">Payments</button>
-      </div>
-
-      <div class="auth-panel" id="panelSignin">
-        <form id="loginForm">
-          <input id="loginEmail" type="email" placeholder="Email address" required />
-          <input id="loginPassword" type="password" placeholder="Password" required />
-          <button class="auth-submit" type="submit">Sign In as <span class="roleLabel">Individual</span></button>
-        </form>
-        <div class="auth-links"><a id="forgotPasswordLink">Forgot password?</a></div>
-        <div class="auth-forgot-panel" id="forgotPanel" hidden>
-          <input id="forgotIdentifier" placeholder="Email or phone" />
-          <button type="button" id="sendOtpBtn" class="auth-secondary">Send OTP</button>
-          <input id="resetOtp" placeholder="OTP code" />
-          <input id="resetNewPassword" type="password" placeholder="New password" />
-          <button type="button" id="resetPasswordBtn" class="auth-secondary">Reset password</button>
-          <div id="forgotMessage" class="auth-message"></div>
-        </div>
-      </div>
-
-      <div class="auth-panel" id="panelRegister" hidden>
-        <form id="registerForm">
-          <input id="registerName" placeholder="Full name" required />
-          <input id="registerEmail" type="email" placeholder="Email address" required />
-          <input id="registerPassword" type="password" placeholder="Password" required />
-          <button class="auth-submit" type="submit">Register as <span class="roleLabel">Individual</span></button>
-        </form>
-      </div>
-
-      <div class="auth-panel auth-quick-panel" id="panelQuick" hidden>
-        <p>Skip sign-in and ask a question in the chat above.</p>
-        <button type="button" class="auth-submit" id="quickChatBtn">Go to chat</button>
-      </div>
-
-      <div class="auth-panel auth-payments-panel" id="panelPayments" hidden>
-        <p>Book &amp; pay for a real consultation.</p>
-        <a id="paymentsLink" href="/pay?consultation_type=lawyer" class="auth-submit" target="_blank" rel="noopener">Continue to Payments</a>
-      </div>
-
-      <div id="authMessage" class="auth-message"></div>
-    </div>
-  </div>
 
 </div>
 

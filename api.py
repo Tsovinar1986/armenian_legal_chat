@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
+import speech_recognition as sr
 import stripe
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -25,6 +26,7 @@ from starlette.concurrency import run_in_threadpool
 
 from src.db import portal_store
 from src.services.crisis_detection import detect_crisis_signal, get_crisis_response
+from src.services.voice import sanitize_transcript
 
 app = FastAPI(title="Armenian Legal Portal", version="1.0.0")
 
@@ -1334,13 +1336,74 @@ async def get_chat_history(session_id: str):
 DOCUMENT_EXTENSIONS = {".txt", ".xlsx"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
+# Short app-wide language code -> Google Speech Recognition locale. Any code
+# not listed here falls back to hy-AM, same convention as _t()/get_crisis_response
+# falling back to English for unlisted codes elsewhere in the app.
+STT_LANGUAGE_MAP = {
+    "hy": "hy-AM",
+    "en": "en-US",
+    "ru": "ru-RU",
+}
+
+
+def _extract_wav(src_path: str, timeout: int = 60) -> str:
+    """ffmpeg: convert src_path into a 16kHz mono WAV alongside it. Works
+    both for raw mic recordings (webm/ogg) and as an audio-track extractor
+    for video uploads — ffmpeg pulls whichever audio stream is present and
+    `-vn` just tells it to drop any video stream from the output."""
+    wav_path = src_path + ".wav"
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-i", src_path, "-vn", "-ar", "16000", "-ac", "1", wav_path],
+        capture_output=True, text=True, timeout=timeout,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {proc.stderr[-500:]}")
+    return wav_path
+
+
+def _recognize_wav(wav_path: str, language: str) -> str:
+    """Shared recognize_google() call — same one the CLI's mic loop
+    (src/services/voice.py) uses — behind the app's short language codes."""
+    recognizer = sr.Recognizer()
+    with sr.AudioFile(wav_path) as source:
+        audio = recognizer.record(source)
+    stt_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
+    text = recognizer.recognize_google(audio, language=stt_locale)
+    return sanitize_transcript(text, language=language)
+
+
+def _transcribe_video_audio(video_path: str, language: str) -> str:
+    """Best-effort: extract + transcribe whatever speech is in a video's
+    audio track for the upload analysis. Unlike /api/speech-to-text, a
+    failure here (no audio track, unrecognized speech, no network) is not
+    fatal to the upload — it just means no transcript, so this always
+    returns a string ("" on failure) instead of raising."""
+    wav_path = None
+    try:
+        wav_path = _extract_wav(video_path)
+        return _recognize_wav(wav_path, language)
+    except Exception:
+        return ""
+    finally:
+        if wav_path and os.path.exists(wav_path):
+            os.remove(wav_path)
+
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(
+    file: UploadFile = File(...),
+    language: str = Form("hy"),
+    session_id: str = Form(None),
+):
     """Browser equivalent of the desktop CLI's [u]pload (src/main.py
     handle_upload): documents get embedded into the case vector store,
     videos get run through the same YOLO+MediaPipe action/emotion pipeline
-    (headless — see LegalVisionService.analyze_video_headless)."""
+    (headless — see LegalVisionService.analyze_video_headless) plus a
+    speech-to-text pass over the video's audio track, so "what was said"
+    is surfaced alongside the visual analysis. When session_id is given,
+    the video analysis (actions/emotion/transcript) is also appended to
+    that chat session as a bot message, so a follow-up question in the
+    same session has it as conversational context."""
     suffix = os.path.splitext(file.filename or "")[1].lower()
     if suffix not in DOCUMENT_EXTENSIONS and suffix not in VIDEO_EXTENSIONS:
         return {
@@ -1365,22 +1428,27 @@ async def upload_file(file: UploadFile = File(...)):
 
         vision_service = get_vision_service()
         result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12)
+        transcript = await run_in_threadpool(_transcribe_video_audio, tmp_path, language)
+        result["transcript"] = transcript
+
+        if session_id:
+            actions = ", ".join(result.get("actions") or []) or "none detected"
+            summary = (
+                f"[Uploaded video '{file.filename}' analyzed — "
+                f"actions: {actions}; emotion: {result.get('emotion') or 'n/a'}"
+                + (f"; spoken: \"{transcript}\"" if transcript else "; no speech detected")
+                + "]"
+            )
+            await run_in_threadpool(
+                portal_store.append_chat_message, session_id, "legal", "bot", summary
+            )
+
         return {"success": True, "kind": "video", **result}
     except Exception as exc:
         return {"success": False, "message": f"Could not process '{file.filename}': {exc}"}
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
-
-
-# Short app-wide language code -> Google Speech Recognition locale. Any code
-# not listed here falls back to hy-AM, same convention as _t()/get_crisis_response
-# falling back to English for unlisted codes elsewhere in the app.
-STT_LANGUAGE_MAP = {
-    "hy": "hy-AM",
-    "en": "en-US",
-    "ru": "ru-RU",
-}
 
 
 @app.post("/api/speech-to-text")
@@ -1397,36 +1465,20 @@ async def speech_to_text(file: UploadFile = File(...), language: str = Form("hy"
             src_tmp.write(await file.read())
             src_path = src_tmp.name
 
-        wav_path = src_path + ".wav"
-        stt_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
-
         def convert_and_transcribe():
-            proc = subprocess.run(
-                ["ffmpeg", "-y", "-i", src_path, "-ar", "16000", "-ac", "1", wav_path],
-                capture_output=True, text=True, timeout=30,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(f"ffmpeg failed: {proc.stderr[-500:]}")
-
-            import speech_recognition as sr
-            from src.services.voice import sanitize_transcript
-
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(wav_path) as source:
-                audio = recognizer.record(source)
-            text = recognizer.recognize_google(audio, language=stt_locale)
-            return sanitize_transcript(text, language=language)
+            nonlocal wav_path
+            wav_path = _extract_wav(src_path, timeout=30)
+            return _recognize_wav(wav_path, language)
 
         text = await run_in_threadpool(convert_and_transcribe)
         if not text:
             return {"success": False, "message": "Didn't catch valid speech — please try again."}
         return {"success": True, "text": text}
+    except sr.UnknownValueError:
+        return {"success": False, "message": "Didn't catch valid speech — please try again."}
+    except sr.RequestError as exc:
+        return {"success": False, "message": f"Speech recognition service error: {exc}"}
     except Exception as exc:
-        import speech_recognition as sr
-        if isinstance(exc, sr.UnknownValueError):
-            return {"success": False, "message": "Didn't catch valid speech — please try again."}
-        if isinstance(exc, sr.RequestError):
-            return {"success": False, "message": f"Speech recognition service error: {exc}"}
         return {"success": False, "message": f"Speech-to-text failed: {exc}"}
     finally:
         for p in (src_path, wav_path):

@@ -155,27 +155,8 @@ No action needed for existing callers — `/api/chat`, `/api/therapist-chat`, an
 
 ---
 
-### 11. **Web Frontend (Vite) Wired to the Live Backend**
-A new browser client at `frontend/` (`npm run dev`, `localhost:5173`) — a chat console that makes real requests against the FastAPI backend, not a mockup. Built to visually demo how the desktop CLI's controls (mic, upload, typed questions) work as a standalone web page.
-
-**Features:**
-- Typed questions call `POST /api/chat`; the mic button records with the browser's `MediaRecorder` API and transcribes via a new `POST /api/speech-to-text` endpoint; file/video upload calls a new `POST /api/upload` endpoint — all three are real backend calls, none are simulated
-- `POST /api/upload`: documents (`.txt`/`.xlsx`) are embedded via `IngestionService`; videos (`.mp4`/`.mov`/`.avi`/`.mkv`) run through a new headless variant of the vision pipeline, `LegalVisionService.analyze_video_headless()` (YOLO + MediaPipe action/emotion detection, sampling up to 12 frames, no GUI calls — the original `process_video()` used `cv2.imshow`, which only works on a desktop with a display)
-- `POST /api/speech-to-text`: converts the browser's recorded audio (webm/opus, ogg, etc.) to a 16kHz mono WAV via `ffmpeg`, then runs the same `speech_recognition`/Google recognizer the CLI's mic uses
-- Vite's dev-server proxy forwards `/api` and `/health` to `localhost:8000`, so no CORS configuration is needed
-- `notebook/frontend_preview.ipynb`: embeds the running `localhost:5173` page in a Jupyter `IFrame`, so the same live frontend can be exercised from a notebook instead of a browser tab
-- Desktop CLI (`src/main.py`) also gained a live mic on/off toggle (`v` key) — previously the mic was only enabled/disabled once at startup
-
-**How to use:**
-```bash
-uvicorn api:app --reload --host 0.0.0.0 --port 8000   # backend
-cd frontend && npm install && npm run dev              # frontend, localhost:5173
-```
-
----
-
-### 12. **Multilingual Support: Armenian, English, Russian**
-Chat responses, the mic's speech recognition, and crisis-safety messaging now all work in three languages instead of Armenian-only, selected via three flag buttons (🇦🇲/🇬🇧/🇷🇺) in the new web frontend.
+### 11. **Multilingual Support: Armenian, English, Russian**
+Chat responses, the mic's speech recognition, and crisis-safety messaging now all work in three languages instead of Armenian-only, selected via a `language` field on the chat/speech-to-text APIs.
 
 **Features:**
 - `src/agents/legal_agent.py`'s `_TEMPLATE_TEXT` (classifier-match/vector-match response templates) and `src/services/crisis_detection.py`'s crisis-response text both gained real Russian translations, alongside the existing Armenian/English ones — any other requested language code still falls back to English
@@ -184,11 +165,11 @@ Chat responses, the mic's speech recognition, and crisis-safety messaging now al
 - Fixed a related bug this surfaced: `sanitize_transcript()`'s junk-filter used to require an Armenian letter in any short transcript, which would have silently dropped valid short English/Russian mic input ("Hello", "Привет") — that check is now scoped to Armenian only
 
 **How to use:**
-Click a language button in the frontend before asking a question (typed or by voice); `/api/chat` also accepts `language` directly for non-browser integrations.
+Pass `language` (`"hy"`/`"en"`/`"ru"`) directly to `/api/chat` or `/api/speech-to-text`.
 
 ---
 
-### 13. **Classifier Accuracy Fixes and a New Off-Topic Guardrail**
+### 12. **Classifier Accuracy Fixes and a New Off-Topic Guardrail**
 Investigated real reports of the assistant answering with an unrelated matched case, follow-up questions returning the exact same answer as the previous turn, and off-topic requests being answered instead of declined. All four turned out to share root causes in `LegalCaseClassifier`/`LegalAgent`, now fixed:
 
 **Fixes:**

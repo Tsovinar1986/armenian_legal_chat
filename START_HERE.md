@@ -70,9 +70,9 @@ The portal now provides:
 - Backend-ready sign-up / registration flow for future frontend integration
 - Armenian legal AI chat (`/api/chat`) with multi-turn conversation memory, backed by the case-law classifier + RAG pipeline used by the CLI app
 
-## 4. Frontend placeholder for sign-up / registration
+## 4. Sign-up / registration API
 
-Since the frontend is not ready yet, the sign-up and sign-in flow is currently exposed as a backend-ready placeholder that can be connected to a future frontend.
+The sign-up and sign-in flow is exposed as a backend-ready placeholder that can be connected to a future frontend.
 
 - Open the temporary demo page at http://localhost:8000/ to see the registration form.
 - The registration endpoint is ready for integration: http://localhost:8000/api/auth/register
@@ -89,7 +89,7 @@ Example registration payload:
 }
 ```
 
-When the real frontend is built, you can connect the sign-up form to this endpoint and use the same payload structure.
+When a real frontend is built, connect the sign-up form to this endpoint and use the same payload structure.
 
 ## 5. Mobile app readiness for Android and iOS
 
