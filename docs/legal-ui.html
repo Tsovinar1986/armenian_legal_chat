@@ -382,7 +382,8 @@
         <button class="ctrl active" id="btnMic" type="button"><kbd>m</kbd>🎤 Ask by voice</button>
         <button class="ctrl" id="btnUpload" type="button"><kbd>u</kbd>📎 Upload doc / video</button>
         <button class="ctrl" id="btnCam" type="button"><kbd>c</kbd>📷 Toggle camera</button>
-        <input type="file" id="fileInput" accept=".txt,.xlsx,.mp4,.mov,.avi,.mkv" />
+        <!-- No `accept` restriction — see frontend/index.html for why. -->
+        <input type="file" id="fileInput" />
       </div>
 
       <div class="composer">

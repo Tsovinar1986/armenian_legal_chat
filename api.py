@@ -1355,6 +1355,19 @@ STT_LANGUAGE_DISPLAY_NAMES = {
     "ru": "Russian",
 }
 
+# A video's full audio track producing only a couple of characters/one short
+# word (e.g. "I am") is far more likely a spurious misrecognition of
+# music/singing/background noise than genuine dialogue — recognize_google has
+# no confidence score to lean on here. Below this length, a locale's result
+# is treated as not good enough and the next locale is tried instead (see
+# _recognize_wav's min_chars); if nothing clears the bar, the video is
+# reported as having audio but no reliable speech (see
+# _transcribe_video_audio) rather than confidently showing a couple of
+# probably-wrong words. Not applied to the live mic endpoint
+# (/api/speech-to-text), where a short "Yes"/"Stop" is a normal, expected
+# utterance rather than noise.
+MIN_VIDEO_TRANSCRIPT_CHARS = 8
+
 
 def _extract_wav(src_path: str, timeout: int = 60) -> str:
     """ffmpeg: convert src_path into a 16kHz mono WAV alongside it. Works
@@ -1371,21 +1384,33 @@ def _extract_wav(src_path: str, timeout: int = 60) -> str:
     return wav_path
 
 
-def _recognize_wav(wav_path: str, language: str) -> tuple[str, str]:
+def _recognize_wav(wav_path: str, language: str, try_other_locales: bool = False, min_chars: int = 0) -> tuple[str, str]:
     """Shared recognize_google() call — same one the CLI's mic loop
     (src/services/voice.py) uses — behind the app's short language codes.
 
-    recognize_google() takes exactly one fixed locale per call and has no
-    built-in language auto-detection, but the audio's actual spoken language
-    doesn't necessarily match the language the app's UI happens to be set to
-    (e.g. someone uploads a Russian-language video while the portal is set to
-    Armenian). So this tries the requested language's locale first, then
-    falls back through the app's other supported locales in turn, stopping
-    at the first one that produces a real (non-junk, post-sanitize)
-    transcript. A given locale simply not understanding the audio
-    (UnknownValueError) just moves on to the next locale; a service-level
-    failure (RequestError — network/quota) isn't locale-specific, so it's
-    left to propagate immediately rather than being retried per locale.
+    By default this only tries the requested language's own locale, exactly
+    like before — this matters for the live mic endpoint
+    (/api/speech-to-text): the user is actively speaking in whatever
+    language the app's UI is currently set to, so if that locale can't make
+    sense of the audio the honest answer is "didn't catch that", not a
+    confidently-wrong transcript guessed by mis-hearing the same audio as a
+    *different* language (which is what naively trying every locale did —
+    Google's recognizer is eager to produce *something* for almost any
+    input, even the wrong language's audio).
+
+    `try_other_locales=True` (used by _transcribe_video_audio for uploaded
+    videos, where the actual spoken language is genuinely unknown and may
+    not match the UI's language) additionally falls back through the app's
+    other supported locales in turn when the preferred one comes up empty.
+    A locale simply not understanding the audio (UnknownValueError) just
+    moves on to the next locale; a service-level failure (RequestError —
+    network/quota) isn't locale-specific, so it's left to propagate
+    immediately rather than being retried per locale.
+
+    `min_chars`: a candidate transcript shorter than this (post-sanitize) is
+    treated as too unreliable to accept — the next locale is tried instead
+    (or, with try_other_locales=False, nothing is returned) — see
+    MIN_VIDEO_TRANSCRIPT_CHARS.
 
     Returns (transcript, detected_language_code); detected_language_code is
     "" when no locale produced a usable transcript."""
@@ -1395,11 +1420,12 @@ def _recognize_wav(wav_path: str, language: str) -> tuple[str, str]:
 
     preferred_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
     attempts = [(language, preferred_locale)]
-    seen_locales = {preferred_locale}
-    for code, locale in STT_LANGUAGE_MAP.items():
-        if locale not in seen_locales:
-            seen_locales.add(locale)
-            attempts.append((code, locale))
+    if try_other_locales:
+        seen_locales = {preferred_locale}
+        for code, locale in STT_LANGUAGE_MAP.items():
+            if locale not in seen_locales:
+                seen_locales.add(locale)
+                attempts.append((code, locale))
 
     for code, locale in attempts:
         try:
@@ -1407,7 +1433,7 @@ def _recognize_wav(wav_path: str, language: str) -> tuple[str, str]:
         except sr.UnknownValueError:
             continue
         text = sanitize_transcript(raw_text, language=code)
-        if text:
+        if text and len(text) >= min_chars:
             return text, code
     return "", ""
 
@@ -1443,7 +1469,9 @@ def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, 
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
-        text, detected_language = _recognize_wav(wav_path, language)
+        text, detected_language = _recognize_wav(
+            wav_path, language, try_other_locales=True, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS
+        )
         has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
         return text, has_nonspeech_audio, detected_language
     except Exception:
@@ -1491,7 +1519,28 @@ async def upload_file(
             agent = await run_in_threadpool(get_legal_agent)
             ingestor = IngestionService(agent.repo.db)
             status = await run_in_threadpool(ingestor.process_file, tmp_path)
-            return {"success": True, "kind": "document", "message": status}
+
+            # Beyond indexing the document into the vector store, also run its
+            # extracted text through the legal agent for an actual summary/
+            # analysis of its content — matching what the CLI's handle_upload
+            # already does (src/main.py) — instead of only reporting
+            # "indexed successfully" with no insight into what it says.
+            analysis = ""
+            try:
+                doc_text = await run_in_threadpool(ingestor.extract_text, tmp_path)
+                if doc_text.strip():
+                    analysis = await run_in_threadpool(agent.get_advice, doc_text, None, language)
+            except Exception:
+                analysis = ""
+
+            if session_id and analysis:
+                await run_in_threadpool(portal_store.clear_chat_messages, session_id, "legal")
+                await run_in_threadpool(
+                    portal_store.append_chat_message, session_id, "legal", "bot",
+                    f"[Uploaded document '{file.filename}']\n{analysis}",
+                )
+
+            return {"success": True, "kind": "document", "message": status, "analysis": analysis}
 
         vision_service = get_vision_service()
         result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12, language)
@@ -1502,47 +1551,70 @@ async def upload_file(
         result["has_nonspeech_audio"] = has_nonspeech_audio
         result["transcript_language"] = detected_language
 
-        if session_id:
-            actions = ", ".join(result.get("actions") or []) or "none detected"
-            emotion_changes = result.get("emotion_changes") or []
-            if transcript:
-                # detected_language can differ from the request's own `language`
-                # (e.g. a Russian-language video uploaded while the portal is
-                # set to Armenian) — _recognize_wav already fell back across
-                # locales to find it, so say which one explicitly instead of
-                # silently presenting it as if it matched the UI language.
-                if detected_language and detected_language != language:
-                    lang_name = STT_LANGUAGE_DISPLAY_NAMES.get(detected_language, detected_language)
-                    speech_note = f"; spoken (in {lang_name}): \"{transcript}\""
-                else:
-                    speech_note = f"; spoken: \"{transcript}\""
-            elif has_nonspeech_audio:
-                # The track has audible sound (music, singing, background
-                # noise, etc.) but nothing recognizable as speech in any
-                # supported language — worth saying explicitly instead of
-                # implying the video is silent.
-                speech_note = "; no speech detected — sound was heard (possibly music/a song or background audio)"
+        actions = ", ".join(result.get("actions") or []) or "none detected"
+        emotion_changes = result.get("emotion_changes") or []
+        if transcript:
+            # detected_language can differ from the request's own `language`
+            # (e.g. a Russian-language video uploaded while the portal is
+            # set to Armenian) — _recognize_wav already fell back across
+            # locales to find it, so say which one explicitly instead of
+            # silently presenting it as if it matched the UI language.
+            if detected_language and detected_language != language:
+                lang_name = STT_LANGUAGE_DISPLAY_NAMES.get(detected_language, detected_language)
+                speech_note = f"; spoken (in {lang_name}): \"{transcript}\""
             else:
-                # No speech to go on — fall back to describing what the action
-                # detection actually saw happening in the video instead.
-                speech_note = f"; no speech detected (based on action detection: {actions})"
-            emotion_note = (
-                f"; emotion changed during video: {' → '.join(emotion_changes)}"
-                if len(emotion_changes) > 1 else ""
-            )
-            summary = (
-                f"[Uploaded video '{file.filename}' analyzed — "
-                f"actions: {actions}; emotion: {result.get('emotion') or 'n/a'}"
-                + emotion_note + speech_note
-                + "]"
-            )
+                speech_note = f"; spoken: \"{transcript}\""
+        elif has_nonspeech_audio:
+            # The track has audible sound (music, singing, background
+            # noise, etc.) but nothing recognizable as speech in any
+            # supported language — worth saying explicitly instead of
+            # implying the video is silent.
+            speech_note = "; no speech detected — sound was heard (possibly music/a song or background audio)"
+        else:
+            # No speech to go on — fall back to describing what the action
+            # detection actually saw happening in the video instead.
+            speech_note = f"; no speech detected (based on action detection: {actions})"
+        emotion_note = (
+            f"; emotion changed during video: {' → '.join(emotion_changes)}"
+            if len(emotion_changes) > 1 else ""
+        )
+        objects_seen_list = result.get("objects") or []
+        # Non-person objects (a vehicle, a phone, etc.) seen alongside
+        # whatever actions/emotion were detected — e.g. a person next to a
+        # car — instead of leaving vehicles/objects out of the summary
+        # entirely just because a person was also in frame.
+        objects_note = f"; objects seen: {', '.join(objects_seen_list)}" if objects_seen_list else ""
+        video_summary = (
+            f"[Uploaded video '{file.filename}' analyzed — "
+            f"actions: {actions}; emotion: {result.get('emotion') or 'n/a'}"
+            + emotion_note + objects_note + speech_note
+            + "]"
+        )
+
+        # Beyond the raw detection facts above, also ask the legal agent for
+        # an actual interpretation/analysis of what was found — same idea as
+        # the document upload path above — instead of leaving the caller
+        # with only bare actions/emotion/transcript data and no assessment.
+        agent = await run_in_threadpool(get_legal_agent)
+        analysis = ""
+        try:
+            analysis = await run_in_threadpool(agent.get_advice, video_summary, None, language)
+        except Exception:
+            analysis = ""
+        result["analysis"] = analysis
+
+        if session_id:
             # Each video upload starts a new case — clear this session's prior
             # history first, so a follow-up chat about this video isn't fed a
             # previous, unrelated video's analysis as context.
             await run_in_threadpool(portal_store.clear_chat_messages, session_id, "legal")
             await run_in_threadpool(
-                portal_store.append_chat_message, session_id, "legal", "bot", summary
+                portal_store.append_chat_message, session_id, "legal", "bot", video_summary
             )
+            if analysis:
+                await run_in_threadpool(
+                    portal_store.append_chat_message, session_id, "legal", "bot", analysis
+                )
 
         return {"success": True, "kind": "video", **result}
     except Exception as exc:

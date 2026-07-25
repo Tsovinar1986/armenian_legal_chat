@@ -118,6 +118,14 @@ class VisionClassifier:
     def _emotion_labels(self, language):
         return self.emotion_map.get(language) or self.emotion_map['en']
 
+    # COCO class ids this app looks for: person (0), vehicles a
+    # legal/incident video commonly involves (bicycle 1, car 2, motorcycle 3,
+    # bus 5, truck 7 — e.g. a traffic stop or accident), and cell phone (67).
+    # Previously only [0, 67] were requested at all, so any vehicle in frame
+    # was invisible to detect_objects no matter how confidently YOLO would
+    # have found it.
+    _DETECTED_CLASSES = [0, 1, 2, 3, 5, 7, 67]
+
     def detect_objects(self, frame):
         if self.yolo is None:
             return [], []
@@ -128,7 +136,7 @@ class VisionClassifier:
         # alongside the real ~0.7-0.8 confidence detections of the same
         # person, one contributing factor to get_person_boxes' de-dup below
         # having so much to clean up in the first place.
-        results = self.yolo(frame, verbose=False, classes=[0, 67], conf=0.5)
+        results = self.yolo(frame, verbose=False, classes=self._DETECTED_CLASSES, conf=0.5)
         detected_objects = [
             self.yolo.names[int(c)] for r in results for c in r.boxes.cls
         ]

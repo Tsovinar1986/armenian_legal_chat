@@ -13,16 +13,35 @@ from PIL import Image, ImageDraw, ImageFont
 MENTAL_HEALTH_CONCERN_WINDOW = 30
 MENTAL_HEALTH_CONCERN_RATIO = 0.6
 
-# detect_objects() is restricted to YOLO COCO classes [0, 67] = person, cell
-# phone — so "cell phone" is currently the only non-person class that can
-# ever show up here. Extend this if that class list ever grows.
-# Keyed per interface language ("hy"/"en"/"ru"), same convention as
-# VisionClassifier.action_map/emotion_map — falls back to "en" via
-# _object_names() below for any other language code.
+# Non-person classes VisionClassifier.detect_objects can return (see its
+# _DETECTED_CLASSES). Keyed per interface language ("hy"/"en"/"ru"), same
+# convention as VisionClassifier.action_map/emotion_map — falls back to "en"
+# via _object_names() below for any other language code.
 OBJECT_NAME_MAP = {
-    "hy": {"cell phone": "հեռախոս"},
-    "en": {"cell phone": "phone"},
-    "ru": {"cell phone": "телефон"},
+    "hy": {
+        "cell phone": "հեռախոս",
+        "bicycle": "հեծանիվ",
+        "car": "մեքենա",
+        "motorcycle": "մոտոցիկլ",
+        "bus": "ավտոբուս",
+        "truck": "բեռնատար",
+    },
+    "en": {
+        "cell phone": "phone",
+        "bicycle": "bicycle",
+        "car": "car",
+        "motorcycle": "motorcycle",
+        "bus": "bus",
+        "truck": "truck",
+    },
+    "ru": {
+        "cell phone": "телефон",
+        "bicycle": "велосипед",
+        "car": "автомобиль",
+        "motorcycle": "мотоцикл",
+        "bus": "автобус",
+        "truck": "грузовик",
+    },
 }
 
 # All other hardcoded UI strings this service draws on frames / builds status
@@ -292,6 +311,8 @@ class LegalVisionService:
         # sampled frames shouldn't become a permanent line in the report.
         action_samples = []
         emotion_samples = []
+        object_samples = []
+        object_names = _object_names(language)
         frames_analyzed = 0
         frame_idx = 0
         try:
@@ -321,6 +342,15 @@ class LegalVisionService:
                     # (e.g. a close-up shot) that YOLO's person detector
                     # didn't confidently box.
                     emotion_samples.append(self.classifier.detect_emotion(frame, language=language))
+                    # Non-person objects (vehicles, a phone, etc. — see
+                    # VisionClassifier._DETECTED_CLASSES) tracked regardless of
+                    # whether a person is also in the frame, same as
+                    # process_frame — this pipeline previously didn't track
+                    # objects at all, so a car/bicycle in an uploaded video
+                    # never showed up in the returned result.
+                    object_samples.append({
+                        object_names.get(name, name) for name in objects_seen if name != 'person'
+                    })
                     frames_analyzed += 1
                 frame_idx += 1
         finally:
@@ -347,6 +377,7 @@ class LegalVisionService:
             "actions": sorted(_confirmed_items(action_samples, min_ratio=0.4)),
             "emotion": _majority_emotion(emotion_samples),
             "emotion_changes": emotion_changes,
+            "objects": sorted(_confirmed_items(object_samples, min_ratio=0.4)),
             "frames_analyzed": frames_analyzed,
         }
 
@@ -354,14 +385,12 @@ class LegalVisionService:
         ui = _ui_text(language)
         results, objects_seen = self.classifier.detect_objects(frame)
         actions_in_frame = []
-        person_present = False
 
         # get_person_boxes de-dupes overlapping/nested boxes YOLO's own NMS
         # misses — see its docstring for why iterating r.boxes directly here
         # double-counted one real person's pose as several contradictory
         # "people".
         for x1, y1, x2, y2 in self.classifier.get_person_boxes(results):
-            person_present = True
             crop = frame[y1:y2, x1:x2]
             if crop.size == 0:
                 continue
@@ -371,14 +400,17 @@ class LegalVisionService:
             for idx, action in enumerate(actions):
                 frame = self._draw_unicode_text(frame, action, (x1, y1 - 30 - idx * 22))
 
-        # Non-person objects (e.g. a phone) seen in a frame with nobody in it —
-        # tracked separately so callers can say "object detection only" instead
-        # of defaulting to a fake action/emotion for content with no person.
+        # Non-person objects (a phone, a car/bicycle/etc.) — tracked
+        # regardless of whether a person is also in the frame. Previously
+        # this was zeroed out whenever person_present was True, which
+        # silently dropped exactly the common case of "a person next to a
+        # vehicle" (e.g. a traffic stop, someone working on a car) instead
+        # of reporting both.
         object_names = _object_names(language)
         non_person_objects = sorted({
             object_names.get(name, name) for name in objects_seen if name != 'person'
         })
-        self.state.update_objects(non_person_objects if not person_present else [])
+        self.state.update_objects(non_person_objects)
 
         # detect_emotion() runs its own independent face search (MediaPipe
         # FaceMesh / Haar cascade) and already returns None on its own when

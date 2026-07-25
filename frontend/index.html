@@ -49,7 +49,12 @@
       <div class="dock-controls">
         <button class="ctrl" id="btnMic" type="button" title="Record and transcribe via /api/speech-to-text"><kbd>m</kbd>🎤 Ask by voice</button>
         <button class="ctrl" id="btnUpload" type="button" title="Send to /api/upload"><kbd>u</kbd>📎 Upload doc / video</button>
-        <input type="file" id="fileInput" accept=".txt,.xlsx,.mp4,.mov,.avi,.mkv" hidden />
+        <!-- No `accept` restriction: /api/upload treats any non-video
+             extension as a document (IngestionService has dedicated
+             parsers for txt/xlsx/csv/json/docx/pdf and a generic
+             best-effort text fallback for anything else), so the file
+             picker shouldn't filter out formats the backend can handle. -->
+        <input type="file" id="fileInput" hidden />
       </div>
 
       <div class="composer">
