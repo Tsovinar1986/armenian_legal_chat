@@ -100,7 +100,7 @@ class LegalAIController:
         self.conversation_history = []
 
     def handle_upload(self):
-        print("\n📂 Enter full path to legal document (txt, xlsx) or video (mp4, mov):")
+        print("\n📂 Enter full path to legal document (txt, xlsx, csv, json, docx, pdf, or other text-based format) or video (mp4, mov):")
         _flush_stdin()
         raw_input_path = input(">>> ")
         # Strip straight AND curly/smart quotes (macOS text substitution turns
@@ -134,14 +134,7 @@ class LegalAIController:
         print(f"✅ {status}")
 
         try:
-            if file_path.endswith('.xlsx'):
-                import pandas as pd
-                df = pd.read_excel(file_path)
-                doc_text = df.iloc[:, 0].astype(str).str.cat(sep=' ')
-            else:
-                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    doc_text = f.read()
-
+            doc_text = self.ingestor.extract_text(file_path)
             doc_text = unicodedata.normalize('NFC', doc_text)
             response = self.agent.get_advice(doc_text)
             print(f"\n⚖️ Legal AI Analysis:\n{response}")

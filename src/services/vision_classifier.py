@@ -39,27 +39,84 @@ class VisionClassifier:
         # reported plainly — forcing every mundane action through a legal
         # interpretation (e.g. "standing = sign of respect") misrepresented
         # ordinary footage that has nothing to do with a legal incident.
+        #
+        # Labels are keyed per interface language ("hy"/"en"/"ru") so the
+        # displayed action/emotion text matches whatever language the app's
+        # UI is running in, instead of always being Armenian. classify_actions
+        # and detect_emotion take a `language` argument and fall back to "en"
+        # for any language code without its own table (mirrors legal_agent.py's
+        # _t() convention).
         self.action_map = {
-            'hand_up': 'Ձեռքի բարձրացում (Խոսքի իրավունքի խնդրանք)',
-            'hands_on_hips': 'Ձեռքեր գոտկատեղին (Պաշտպանողական դիրք)',
-            'pointing': 'Ցույց տալ (Ուղղորդող նշում)',
-            'bent_over': 'Ծռված դիրք (Ուշադրության կենտրոնացում)',
-            'walking': 'Քայլում է',
-            'running': 'Վազում է',
-            'phone': 'Հեռախոսի օգտագործում',
-            'standing': 'Կանգնած',
-            'sitting': 'Նստած',
-            'arms_crossed': 'Ձեռքերը խաչած',
-            'normal': 'Բնական վիճակ',
+            'hy': {
+                'hand_up': 'Ձեռքի բարձրացում (Խոսքի իրավունքի խնդրանք)',
+                'hands_on_hips': 'Ձեռքեր գոտկատեղին (Պաշտպանողական դիրք)',
+                'pointing': 'Ցույց տալ (Ուղղորդող նշում)',
+                'bent_over': 'Ծռված դիրք (Ուշադրության կենտրոնացում)',
+                'walking': 'Քայլում է',
+                'running': 'Վազում է',
+                'phone': 'Հեռախոսի օգտագործում',
+                'standing': 'Կանգնած',
+                'sitting': 'Նստած',
+                'arms_crossed': 'Ձեռքերը խաչած',
+                'normal': 'Բնական վիճակ',
+            },
+            'en': {
+                'hand_up': 'Hand raised (request to speak)',
+                'hands_on_hips': 'Hands on hips (defensive posture)',
+                'pointing': 'Pointing (directive gesture)',
+                'bent_over': 'Bent over (focused attention)',
+                'walking': 'Walking',
+                'running': 'Running',
+                'phone': 'Using phone',
+                'standing': 'Standing',
+                'sitting': 'Sitting',
+                'arms_crossed': 'Arms crossed',
+                'normal': 'Natural state',
+            },
+            'ru': {
+                'hand_up': 'Поднятая рука (просьба слова)',
+                'hands_on_hips': 'Руки на поясе (защитная поза)',
+                'pointing': 'Указывающий жест',
+                'bent_over': 'Наклонённое положение (сосредоточенность)',
+                'walking': 'Идёт',
+                'running': 'Бежит',
+                'phone': 'Использует телефон',
+                'standing': 'Стоит',
+                'sitting': 'Сидит',
+                'arms_crossed': 'Руки скрещены',
+                'normal': 'Естественное состояние',
+            },
         }
 
         self.emotion_map = {
-            'happy': 'Երջանիկ',
-            'sad': 'Ծանրը',
-            'neutral': 'Սթափ',
-            'angry': 'Բարկացած',
-            'surprised': 'Հիացած',
+            'hy': {
+                'happy': 'Երջանիկ',
+                'sad': 'Ծանրը',
+                'neutral': 'Սթափ',
+                'angry': 'Բարկացած',
+                'surprised': 'Հիացած',
+            },
+            'en': {
+                'happy': 'Happy',
+                'sad': 'Sad',
+                'neutral': 'Calm',
+                'angry': 'Angry',
+                'surprised': 'Surprised',
+            },
+            'ru': {
+                'happy': 'Счастливый',
+                'sad': 'Грустный',
+                'neutral': 'Спокойный',
+                'angry': 'Злой',
+                'surprised': 'Удивлённый',
+            },
         }
+
+    def _action_labels(self, language):
+        return self.action_map.get(language) or self.action_map['en']
+
+    def _emotion_labels(self, language):
+        return self.emotion_map.get(language) or self.emotion_map['en']
 
     def detect_objects(self, frame):
         if self.yolo is None:
@@ -135,7 +192,7 @@ class VisionClassifier:
     def _distance(self, a, b):
         return np.linalg.norm(np.array(a) - np.array(b))
 
-    def _infer_emotion_from_landmarks(self, landmarks, image_shape):
+    def _infer_emotion_from_landmarks(self, landmarks, image_shape, emotion_map):
         h, w = image_shape[:2]
 
         def pt(index):
@@ -151,11 +208,11 @@ class VisionClassifier:
         smile_ratio = mouth_width / mouth_height if mouth_height else 0.0
 
         if smile_ratio > 4.0 and mouth_height > 0.02 * h:
-            return self.emotion_map['happy']
+            return emotion_map['happy']
         if mouth_height > 0.05 * h and smile_ratio < 2.5:
-            return self.emotion_map['surprised']
+            return emotion_map['surprised']
         if smile_ratio < 2.0:
-            return self.emotion_map['sad']
+            return emotion_map['sad']
 
         # 'angry' was unreachable dead code here before — none of the checks
         # above ever returned it, so no facial expression could ever be read
@@ -172,17 +229,22 @@ class VisionClassifier:
         inner_eye_distance = self._distance(pt(133), pt(362)) + 1e-6
         brow_furrow_ratio = inner_brow_distance / inner_eye_distance
         if brow_furrow_ratio < 0.9:
-            return self.emotion_map['angry']
+            return emotion_map['angry']
 
-        return self.emotion_map['neutral']
+        return emotion_map['neutral']
 
-    def detect_emotion(self, frame):
+    def detect_emotion(self, frame, language='hy'):
         """Returns an emotion label only when a face was actually found —
         None otherwise. Previously this returned emotion_map['neutral'] in
         both the "face found, no expression signal" case AND the "no face at
         all" case, so a frame with nobody in it still reported an emotion
         (e.g. "Սթափ") as if someone were there. Callers should treat None as
-        "no person to read an emotion from", not skip the distinction."""
+        "no person to read an emotion from", not skip the distinction.
+
+        `language` selects which of self.emotion_map's per-language label
+        tables ("hy"/"en"/"ru") the returned string is drawn from, falling
+        back to "en" for anything else."""
+        emotion_map = self._emotion_labels(language)
         if self.mp_face is not None:
             image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.mp_face.process(image_rgb)
@@ -190,12 +252,13 @@ class VisionClassifier:
                 return self._infer_emotion_from_landmarks(
                     results.multi_face_landmarks[0].landmark,
                     frame.shape,
+                    emotion_map,
                 )
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
         if len(faces) > 0:
-            return self.emotion_map['neutral']
+            return emotion_map['neutral']
         return None
 
     def _is_hands_on_hips(self, lm):
@@ -326,18 +389,19 @@ class VisionClassifier:
         # discarding the typical case.
         return visible / len(indices) >= 0.5
 
-    def classify_actions(self, crop, detected_objects):
+    def classify_actions(self, crop, detected_objects, language='hy'):
+        action_map = self._action_labels(language)
         if self.mp_pose is None:
-            return [self.action_map['normal']]
+            return [action_map['normal']]
 
         image_rgb = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
         res_mp = self.mp_pose.process(image_rgb)
         if not res_mp.pose_landmarks:
-            return [self.action_map['normal']]
+            return [action_map['normal']]
 
         lm = res_mp.pose_landmarks.landmark
         if not self._pose_is_reliable(lm):
-            return [self.action_map['normal']]
+            return [action_map['normal']]
         actions = []
         r_wrist = lm[mp.solutions.pose.PoseLandmark.RIGHT_WRIST]
         l_wrist = lm[mp.solutions.pose.PoseLandmark.LEFT_WRIST]
@@ -359,23 +423,23 @@ class VisionClassifier:
         # "physical force" is exactly the kind of legally-loaded claim this
         # kind of unreliable geometry can't actually support.
         if r_wrist.y < (nose.y - 0.2) or l_wrist.y < (nose.y - 0.2):
-            actions.append(self.action_map['hand_up'])
+            actions.append(action_map['hand_up'])
         if self._is_hands_on_hips(lm):
-            actions.append(self.action_map['hands_on_hips'])
+            actions.append(action_map['hands_on_hips'])
         if self._is_pointing(lm):
-            actions.append(self.action_map['pointing'])
+            actions.append(action_map['pointing'])
         if self._is_bent_over(lm):
-            actions.append(self.action_map['bent_over'])
+            actions.append(action_map['bent_over'])
         if self._is_running(lm):
-            actions.append(self.action_map['running'])
+            actions.append(action_map['running'])
         elif self._is_walking(lm):
-            actions.append(self.action_map['walking'])
+            actions.append(action_map['walking'])
         elif self._is_sitting(lm):
-            actions.append(self.action_map['sitting'])
+            actions.append(action_map['sitting'])
         if self._is_arms_crossed(lm):
-            actions.append(self.action_map['arms_crossed'])
+            actions.append(action_map['arms_crossed'])
         if self._is_phone(lm, detected_objects):
-            actions.append(self.action_map['phone'])
+            actions.append(action_map['phone'])
 
         # A "sitting" heuristic used to live here: hip.y close to knee.y.
         # Removed — measured directly against real footage and it fired
@@ -387,4 +451,4 @@ class VisionClassifier:
         # wrong claim ("Դատական նիստի կարգ" / court-session seating) with no
         # real corroborating signal.
 
-        return actions or [self.action_map['standing']]
+        return actions or [action_map['standing']]

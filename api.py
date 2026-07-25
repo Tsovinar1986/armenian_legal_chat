@@ -1335,7 +1335,6 @@ async def get_chat_history(session_id: str):
     return {"session_id": session_id, "messages": messages}
 
 
-DOCUMENT_EXTENSIONS = {".txt", ".xlsx"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
 # Short app-wide language code -> Google Speech Recognition locale. Any code
@@ -1345,6 +1344,15 @@ STT_LANGUAGE_MAP = {
     "hy": "hy-AM",
     "en": "en-US",
     "ru": "ru-RU",
+}
+
+# Display names for surfacing which language a transcript was actually
+# recognized in (see _recognize_wav's per-locale fallback) when it differs
+# from the request's own `language`.
+STT_LANGUAGE_DISPLAY_NAMES = {
+    "hy": "Armenian",
+    "en": "English",
+    "ru": "Russian",
 }
 
 
@@ -1363,15 +1371,45 @@ def _extract_wav(src_path: str, timeout: int = 60) -> str:
     return wav_path
 
 
-def _recognize_wav(wav_path: str, language: str) -> str:
+def _recognize_wav(wav_path: str, language: str) -> tuple[str, str]:
     """Shared recognize_google() call — same one the CLI's mic loop
-    (src/services/voice.py) uses — behind the app's short language codes."""
+    (src/services/voice.py) uses — behind the app's short language codes.
+
+    recognize_google() takes exactly one fixed locale per call and has no
+    built-in language auto-detection, but the audio's actual spoken language
+    doesn't necessarily match the language the app's UI happens to be set to
+    (e.g. someone uploads a Russian-language video while the portal is set to
+    Armenian). So this tries the requested language's locale first, then
+    falls back through the app's other supported locales in turn, stopping
+    at the first one that produces a real (non-junk, post-sanitize)
+    transcript. A given locale simply not understanding the audio
+    (UnknownValueError) just moves on to the next locale; a service-level
+    failure (RequestError — network/quota) isn't locale-specific, so it's
+    left to propagate immediately rather than being retried per locale.
+
+    Returns (transcript, detected_language_code); detected_language_code is
+    "" when no locale produced a usable transcript."""
     recognizer = sr.Recognizer()
     with sr.AudioFile(wav_path) as source:
         audio = recognizer.record(source)
-    stt_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
-    text = recognizer.recognize_google(audio, language=stt_locale)
-    return sanitize_transcript(text, language=language)
+
+    preferred_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
+    attempts = [(language, preferred_locale)]
+    seen_locales = {preferred_locale}
+    for code, locale in STT_LANGUAGE_MAP.items():
+        if locale not in seen_locales:
+            seen_locales.add(locale)
+            attempts.append((code, locale))
+
+    for code, locale in attempts:
+        try:
+            raw_text = recognizer.recognize_google(audio, language=locale)
+        except sr.UnknownValueError:
+            continue
+        text = sanitize_transcript(raw_text, language=code)
+        if text:
+            return text, code
+    return "", ""
 
 
 def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
@@ -1389,24 +1427,28 @@ def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
         return False
 
 
-def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool]:
+def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, str]:
     """Best-effort: extract + transcribe whatever speech is in a video's
     audio track for the upload analysis. Unlike /api/speech-to-text, a
     failure here (no audio track, unrecognized speech, no network) is not
     fatal to the upload — it just means no transcript, so this always
-    returns a (text, has_nonspeech_audio) pair ("", False on failure) instead
-    of raising. has_nonspeech_audio is only meaningful when text is empty —
-    it tells the caller whether the track had audible content (possibly
-    music/background sound) that just didn't transcribe as speech."""
+    returns a (text, has_nonspeech_audio, detected_language) triple
+    ("", False, "" on failure) instead of raising. has_nonspeech_audio is
+    only meaningful when text is empty — it tells the caller whether the
+    track had audible content (possibly music/background sound) that just
+    didn't transcribe as speech in any supported language. detected_language
+    is which of the app's supported languages ("hy"/"en"/"ru") the speech was
+    actually recognized in — see _recognize_wav's per-locale fallback — which
+    may differ from the `language` the request was made with."""
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
-        text = _recognize_wav(wav_path, language)
+        text, detected_language = _recognize_wav(wav_path, language)
         has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
-        return text, has_nonspeech_audio
+        return text, has_nonspeech_audio, detected_language
     except Exception:
         has_nonspeech_audio = bool(wav_path and os.path.exists(wav_path) and _wav_has_audio_content(wav_path))
-        return "", has_nonspeech_audio
+        return "", has_nonspeech_audio, ""
     finally:
         if wav_path and os.path.exists(wav_path):
             os.remove(wav_path)
@@ -1426,14 +1468,16 @@ async def upload_file(
     is surfaced alongside the visual analysis. When session_id is given,
     the video analysis (actions/emotion/transcript) is also appended to
     that chat session as a bot message, so a follow-up question in the
-    same session has it as conversational context."""
+    same session has it as conversational context. Any file that isn't a
+    recognized video extension is treated as a document: IngestionService
+    has a dedicated parser for the most common formats (txt/xlsx/csv/json/
+    docx/pdf) and falls back to generic best-effort text extraction for
+    anything else, so uploads are no longer rejected outright based on
+    extension."""
     suffix = os.path.splitext(file.filename or "")[1].lower()
-    if suffix not in DOCUMENT_EXTENSIONS and suffix not in VIDEO_EXTENSIONS:
-        return {
-            "success": False,
-            "message": f"Unsupported file type '{suffix or '(none)'}'. "
-                       f"Use one of: {', '.join(sorted(DOCUMENT_EXTENSIONS | VIDEO_EXTENSIONS))}.",
-        }
+    is_video = suffix in VIDEO_EXTENSIONS
+    if not file.filename:
+        return {"success": False, "message": "No file was uploaded."}
 
     tmp_path = None
     try:
@@ -1441,7 +1485,7 @@ async def upload_file(
             tmp.write(await file.read())
             tmp_path = tmp.name
 
-        if suffix in DOCUMENT_EXTENSIONS:
+        if not is_video:
             from src.services.ingestion import IngestionService
 
             agent = await run_in_threadpool(get_legal_agent)
@@ -1450,21 +1494,34 @@ async def upload_file(
             return {"success": True, "kind": "document", "message": status}
 
         vision_service = get_vision_service()
-        result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12)
-        transcript, has_nonspeech_audio = await run_in_threadpool(_transcribe_video_audio, tmp_path, language)
+        result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12, language)
+        transcript, has_nonspeech_audio, detected_language = await run_in_threadpool(
+            _transcribe_video_audio, tmp_path, language
+        )
         result["transcript"] = transcript
         result["has_nonspeech_audio"] = has_nonspeech_audio
+        result["transcript_language"] = detected_language
 
         if session_id:
             actions = ", ".join(result.get("actions") or []) or "none detected"
             emotion_changes = result.get("emotion_changes") or []
             if transcript:
-                speech_note = f"; spoken: \"{transcript}\""
+                # detected_language can differ from the request's own `language`
+                # (e.g. a Russian-language video uploaded while the portal is
+                # set to Armenian) — _recognize_wav already fell back across
+                # locales to find it, so say which one explicitly instead of
+                # silently presenting it as if it matched the UI language.
+                if detected_language and detected_language != language:
+                    lang_name = STT_LANGUAGE_DISPLAY_NAMES.get(detected_language, detected_language)
+                    speech_note = f"; spoken (in {lang_name}): \"{transcript}\""
+                else:
+                    speech_note = f"; spoken: \"{transcript}\""
             elif has_nonspeech_audio:
-                # The track has audible sound (music, background noise, etc.)
-                # but nothing recognizable as speech — worth saying explicitly
-                # instead of implying the video is silent.
-                speech_note = "; no speech detected — sound was heard (possibly music or background audio)"
+                # The track has audible sound (music, singing, background
+                # noise, etc.) but nothing recognizable as speech in any
+                # supported language — worth saying explicitly instead of
+                # implying the video is silent.
+                speech_note = "; no speech detected — sound was heard (possibly music/a song or background audio)"
             else:
                 # No speech to go on — fall back to describing what the action
                 # detection actually saw happening in the video instead.
@@ -1514,10 +1571,10 @@ async def speech_to_text(file: UploadFile = File(...), language: str = Form("hy"
             wav_path = _extract_wav(src_path, timeout=30)
             return _recognize_wav(wav_path, language)
 
-        text = await run_in_threadpool(convert_and_transcribe)
+        text, detected_language = await run_in_threadpool(convert_and_transcribe)
         if not text:
             return {"success": False, "message": "Didn't catch valid speech — please try again."}
-        return {"success": True, "text": text}
+        return {"success": True, "text": text, "language": detected_language}
     except sr.UnknownValueError:
         return {"success": False, "message": "Didn't catch valid speech — please try again."}
     except sr.RequestError as exc:

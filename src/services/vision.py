@@ -16,9 +16,48 @@ MENTAL_HEALTH_CONCERN_RATIO = 0.6
 # detect_objects() is restricted to YOLO COCO classes [0, 67] = person, cell
 # phone — so "cell phone" is currently the only non-person class that can
 # ever show up here. Extend this if that class list ever grows.
-OBJECT_NAME_HY = {
-    "cell phone": "հեռախոս",
+# Keyed per interface language ("hy"/"en"/"ru"), same convention as
+# VisionClassifier.action_map/emotion_map — falls back to "en" via
+# _object_names() below for any other language code.
+OBJECT_NAME_MAP = {
+    "hy": {"cell phone": "հեռախոս"},
+    "en": {"cell phone": "phone"},
+    "ru": {"cell phone": "телефон"},
 }
+
+# All other hardcoded UI strings this service draws on frames / builds status
+# text from, keyed the same way.
+UI_TEXT = {
+    "hy": {
+        "emotion_label": "Էմոցիան",
+        "therapist_suggestion": "💙 Առաջարկվում է խոսել թերապևտի հետ",
+        "objects_no_person": "Օբյեկտների հայտնաբերում (անձ չի հայտնաբերվել)",
+        "latest_detection": "Վերջին հայտնաբերումը",
+        "analyzing": "Վերլուծություն...",
+    },
+    "en": {
+        "emotion_label": "Emotion",
+        "therapist_suggestion": "💙 Talking to a therapist is recommended",
+        "objects_no_person": "Object detected (no person found)",
+        "latest_detection": "Latest detection",
+        "analyzing": "Analyzing...",
+    },
+    "ru": {
+        "emotion_label": "Эмоция",
+        "therapist_suggestion": "💙 Рекомендуется поговорить с терапевтом",
+        "objects_no_person": "Обнаружены объекты (человек не обнаружен)",
+        "latest_detection": "Последнее обнаружение",
+        "analyzing": "Анализ...",
+    },
+}
+
+
+def _ui_text(language):
+    return UI_TEXT.get(language) or UI_TEXT["en"]
+
+
+def _object_names(language):
+    return OBJECT_NAME_MAP.get(language) or OBJECT_NAME_MAP["en"]
 
 def _confirmed_items(recent_samples, min_ratio=0.4):
     """recent_samples: an iterable of per-sampled-frame collections (action
@@ -56,12 +95,27 @@ def _majority_emotion(recent_emotion_samples):
     return Counter(non_none).most_common(1)[0][0]
 
 
-MENTAL_HEALTH_SUGGESTION_HY = (
-    "💙 Վերջին րոպեների ընթացքում նկատվում է տխուր/անհանգիստ տրամադրություն։ "
-    "Սա միայն դեմքի արտահայտության վրա հիմնված մոտավոր դիտարկում է, ոչ թե "
-    "ախտորոշում։ Եթե դա իրական է Ձեզ համար, խորհուրդ ենք տալիս զրուցել "
-    "որակավորված թերապևտի հետ կամ գրել մեր չաթում աջակցության համար։"
-)
+MENTAL_HEALTH_SUGGESTION = {
+    "hy": (
+        "💙 Վերջին րոպեների ընթացքում նկատվում է տխուր/անհանգիստ տրամադրություն։ "
+        "Սա միայն դեմքի արտահայտության վրա հիմնված մոտավոր դիտարկում է, ոչ թե "
+        "ախտորոշում։ Եթե դա իրական է Ձեզ համար, խորհուրդ ենք տալիս զրուցել "
+        "որակավորված թերապևտի հետ կամ գրել մեր չաթում աջակցության համար։"
+    ),
+    "en": (
+        "💙 A sad/anxious mood has been noticed over the last few minutes. "
+        "This is only a rough observation based on facial expression, not a "
+        "diagnosis. If this feels real for you, we recommend talking to a "
+        "qualified therapist or writing to us in chat for support."
+    ),
+    "ru": (
+        "💙 За последние несколько минут замечено грустное/тревожное "
+        "настроение. Это лишь приблизительное наблюдение на основе выражения "
+        "лица, а не диагноз. Если это актуально для вас, рекомендуем "
+        "поговорить с квалифицированным терапевтом или написать нам в чат за "
+        "поддержкой."
+    ),
+}
 
 
 class LegalVisionService:
@@ -82,7 +136,7 @@ class LegalVisionService:
             self._classifier = VisionClassifier()
         return self._classifier
 
-    def _check_mental_health_concern(self, emotion, negative_labels):
+    def _check_mental_health_concern(self, emotion, negative_labels, language='hy'):
         """Track a rolling window of recent per-frame emotions and flag a soft
         therapist suggestion once a sustained-enough share are negative.
 
@@ -97,7 +151,8 @@ class LegalVisionService:
         ratio = negative_count / len(self._recent_emotions)
         is_full_window = len(self._recent_emotions) == self._recent_emotions.maxlen
         if is_full_window and ratio >= MENTAL_HEALTH_CONCERN_RATIO:
-            self.state.update_mental_health_concern(True, MENTAL_HEALTH_SUGGESTION_HY)
+            suggestion = MENTAL_HEALTH_SUGGESTION.get(language) or MENTAL_HEALTH_SUGGESTION["en"]
+            self.state.update_mental_health_concern(True, suggestion)
         else:
             self.state.update_mental_health_concern(False)
 
@@ -118,7 +173,7 @@ class LegalVisionService:
         draw.text(position, text, font=font, fill=(0, 255, 0))
         return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
-    def process_video(self, video_path, window_name="Legal AI - Video Analysis", sample_every=5, max_width=960):
+    def process_video(self, video_path, window_name="Legal AI - Video Analysis", sample_every=5, max_width=960, language='hy'):
         """Windowed playback + analysis, tuned to stay usable on an 8GB-RAM
         machine: uploaded videos are often shot at 4K, and running YOLO+
         MediaPipe at full resolution on every single frame is the actual
@@ -169,7 +224,7 @@ class LegalVisionService:
 
                 person_in_frame = False
                 if frame_idx % sample_every == 0:
-                    frame = self.process_frame(frame)  # draws its own per-person action + emotion labels
+                    frame = self.process_frame(frame, language=language)  # draws its own per-person action + emotion labels
                     current_actions = self.state.get_actions()
                     current_emotion = self.state.get_emotion()
                     person_in_frame = bool(current_actions or current_emotion)
@@ -188,12 +243,13 @@ class LegalVisionService:
                 # per-person action/emotion labels are the display — no need
                 # to duplicate that in a second, less specific line.
                 if not person_in_frame:
+                    ui = _ui_text(language)
                     if last_objects:
-                        status_text = "Օբյեկտների հայտնաբերում (անձ չի հայտնաբերվել). " + ", ".join(last_objects)
+                        status_text = f"{ui['objects_no_person']}: " + ", ".join(last_objects)
                     elif unique_actions or last_emotion:
-                        status_text = f"Վերջին հայտնաբերումը. {', '.join(sorted(unique_actions)) or last_emotion}"
+                        status_text = f"{ui['latest_detection']}: {', '.join(sorted(unique_actions)) or last_emotion}"
                     else:
-                        status_text = "Վերլուծություն..."
+                        status_text = ui['analyzing']
                     frame = self._draw_unicode_text(frame, status_text, (10, 10), font_size=24, bg=True)
 
                 cv2.imshow(window_name, frame)
@@ -206,7 +262,7 @@ class LegalVisionService:
 
         return list(unique_actions)
 
-    def analyze_video_headless(self, video_path, max_frames=12):
+    def analyze_video_headless(self, video_path, max_frames=12, language='hy'):
         """Same detection pipeline as process_video, but for server use: no
         cv2.imshow/waitKey (those need a display and would hang/crash a
         request handler), and it samples up to max_frames evenly across the
@@ -214,7 +270,11 @@ class LegalVisionService:
         frame-by-frame inside an HTTP request would be far too slow.
         Deliberately doesn't touch self.state — that's shared across every
         request this process handles, and mixing concurrent uploads into one
-        SystemState would corrupt all of them."""
+        SystemState would corrupt all of them.
+
+        `language` ("hy"/"en"/"ru") selects which language the returned
+        action/emotion labels are written in, matching the app's interface
+        language for this request rather than always Armenian."""
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
             raise ValueError(f"Cannot open video file: {video_path}")
@@ -251,7 +311,7 @@ class LegalVisionService:
                         crop = frame[y1:y2, x1:x2]
                         if crop.size == 0:
                             continue
-                        frame_actions.extend(self.classifier.classify_actions(crop, objects_seen))
+                        frame_actions.extend(self.classifier.classify_actions(crop, objects_seen, language=language))
                     action_samples.append(frame_actions)
                     # detect_emotion() runs its own independent face search
                     # (MediaPipe FaceMesh / Haar cascade) and already returns
@@ -260,7 +320,7 @@ class LegalVisionService:
                     # than necessary and could suppress a real, visible face
                     # (e.g. a close-up shot) that YOLO's person detector
                     # didn't confidently box.
-                    emotion_samples.append(self.classifier.detect_emotion(frame))
+                    emotion_samples.append(self.classifier.detect_emotion(frame, language=language))
                     frames_analyzed += 1
                 frame_idx += 1
         finally:
@@ -290,7 +350,8 @@ class LegalVisionService:
             "frames_analyzed": frames_analyzed,
         }
 
-    def process_frame(self, frame):
+    def process_frame(self, frame, language='hy'):
+        ui = _ui_text(language)
         results, objects_seen = self.classifier.detect_objects(frame)
         actions_in_frame = []
         person_present = False
@@ -305,7 +366,7 @@ class LegalVisionService:
             if crop.size == 0:
                 continue
 
-            actions = self.classifier.classify_actions(crop, objects_seen)
+            actions = self.classifier.classify_actions(crop, objects_seen, language=language)
             actions_in_frame.extend(actions)
             for idx, action in enumerate(actions):
                 frame = self._draw_unicode_text(frame, action, (x1, y1 - 30 - idx * 22))
@@ -313,8 +374,9 @@ class LegalVisionService:
         # Non-person objects (e.g. a phone) seen in a frame with nobody in it —
         # tracked separately so callers can say "object detection only" instead
         # of defaulting to a fake action/emotion for content with no person.
+        object_names = _object_names(language)
         non_person_objects = sorted({
-            OBJECT_NAME_HY.get(name, name) for name in objects_seen if name != 'person'
+            object_names.get(name, name) for name in objects_seen if name != 'person'
         })
         self.state.update_objects(non_person_objects if not person_present else [])
 
@@ -325,18 +387,19 @@ class LegalVisionService:
         # stricter than necessary and could suppress a real, visible face
         # (e.g. a close-up shot) that YOLO's person detector didn't
         # confidently box, making emotion silently stop showing.
-        emotion = self.classifier.detect_emotion(frame)
+        emotion = self.classifier.detect_emotion(frame, language=language)
         self.state.update_emotion(emotion)
         if emotion:
-            frame = self._draw_unicode_text(frame, f"Էմոցիան: {emotion}", (10, 70))
+            frame = self._draw_unicode_text(frame, f"{ui['emotion_label']}: {emotion}", (10, 70))
 
+        emotion_labels = self.classifier._emotion_labels(language)
         negative_labels = {
-            self.classifier.emotion_map.get('sad'),
-            self.classifier.emotion_map.get('angry'),
+            emotion_labels.get('sad'),
+            emotion_labels.get('angry'),
         }
-        self._check_mental_health_concern(emotion, negative_labels)
+        self._check_mental_health_concern(emotion, negative_labels, language=language)
         if self.state.get_mental_health_concern():
-            frame = self._draw_unicode_text(frame, "💙 Առաջարկվում է խոսել թերապևտի հետ", (10, 100))
+            frame = self._draw_unicode_text(frame, ui['therapist_suggestion'], (10, 100))
 
         self.state.update_actions(list(set(actions_in_frame)))
         return frame

@@ -27,8 +27,12 @@ beautifulsoup4>=4.12
 # lazily on first use from sentence-transformers/scikit-learn below; no separate
 # line needed here since both are already required by the notebooks section.
 
-# --- Case export to Word (src/services/case_export.py) ---
+# --- Document ingestion (src/services/ingestion.py) & case export to Word
+# (src/services/case_export.py) ---
 python-docx>=1.1
+# Reads .pdf uploads in IngestionService.extract_text — pure-Python, no
+# compiled/system dependency.
+pypdf>=4.0
 
 # --- RAG & LLM (src/main.py, src/agents/legal_agent.py, src/db/repository.py) ---
 # Vector search talks to chromadb directly via src/db/vector_store.py (not
