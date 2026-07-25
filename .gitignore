@@ -13,3 +13,9 @@ bin/
 src/data/final_data_with_keywords.csv
 src/data/final_data_with_keywords.xlsx
 portal.db
+
+# MLX local fine-tuning (notebook/prepare_mlx_dataset.py, notebook/run_mlx_lora_cpu.py)
+finetune_env/
+adapters/
+logs/
+data/mlx_finetune/

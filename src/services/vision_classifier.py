@@ -95,6 +95,7 @@ class VisionClassifier:
                 'neutral': 'Սթափ',
                 'angry': 'Բարկացած',
                 'surprised': 'Հիացած',
+                'biting_lip': 'Շուրթը կծած',
             },
             'en': {
                 'happy': 'Happy',
@@ -102,6 +103,7 @@ class VisionClassifier:
                 'neutral': 'Calm',
                 'angry': 'Angry',
                 'surprised': 'Surprised',
+                'biting_lip': 'Biting lip',
             },
             'ru': {
                 'happy': 'Счастливый',
@@ -109,6 +111,7 @@ class VisionClassifier:
                 'neutral': 'Спокойный',
                 'angry': 'Злой',
                 'surprised': 'Удивлённый',
+                'biting_lip': 'Кусает губу',
             },
         }
 
@@ -215,6 +218,18 @@ class VisionClassifier:
         mouth_height = self._distance(top_lip, bottom_lip)
         smile_ratio = mouth_width / mouth_height if mouth_height else 0.0
 
+        # Lips pressed almost flat (mouth_height collapses toward zero while
+        # the corners stay at a normal talking width) reads as lip-biting/
+        # pursed-lips tension, not a smile. Measured against real footage
+        # (src/data/v24025gl0000d99b9hfog65qakvae190.MP4): a near-shut mouth
+        # (height ~2-3px on a 960px-wide frame) pushed smile_ratio as high as
+        # ~40, well past the happy check below, even though 'happy' requires
+        # a genuinely open curve (mouth_height > 0.02*h) that a pressed-flat
+        # mouth never reaches. Checked first since it's the more specific
+        # shape — a real smile has both width AND some real height.
+        if smile_ratio > 8.0 and mouth_height < 0.02 * h:
+            return emotion_map['biting_lip']
+
         if smile_ratio > 4.0 and mouth_height > 0.02 * h:
             return emotion_map['happy']
         if mouth_height > 0.05 * h and smile_ratio < 2.5:
@@ -222,23 +237,18 @@ class VisionClassifier:
         if smile_ratio < 2.0:
             return emotion_map['sad']
 
-        # 'angry' was unreachable dead code here before — none of the checks
-        # above ever returned it, so no facial expression could ever be read
-        # as angry, only happy/surprised/sad/neutral. Brow furrowing (inner
-        # eyebrows pulled toward each other, the standard "AU4" cue) is a
-        # real anger signal mouth shape alone can't capture. Measured against
-        # inter-eye distance as a person/distance-independent scale reference
-        # — only overrides the neutral fallback below, not the three checks
-        # above that already have a clearer signal, and requires a fairly
-        # pronounced furrow (ratio < 0.9) to avoid the same over-eager false
-        # positives the action heuristics had — this is unvalidated on real
-        # footage, so it's deliberately conservative rather than tuned tight.
-        inner_brow_distance = self._distance(pt(55), pt(285))
-        inner_eye_distance = self._distance(pt(133), pt(362)) + 1e-6
-        brow_furrow_ratio = inner_brow_distance / inner_eye_distance
-        if brow_furrow_ratio < 0.9:
-            return emotion_map['angry']
-
+        # A brow-furrow 'angry' check used to live here (inner eyebrows
+        # pulled toward inter-eye distance, ratio < 0.9). Removed — measured
+        # directly against real footage (same video as above, 2 different
+        # people, 10 sampled frames with a usable face) and it fired on
+        # 10/10 of them: resting/neutral inner-brow spacing for real faces
+        # sat at 0.6-0.8, i.e. already well under the "pronounced furrow"
+        # threshold before any actual anger. Ordinary anatomical variation in
+        # eyebrow spacing swamps a fixed per-frame threshold like this one —
+        # there's no genuinely-angry sample in reach to recalibrate against
+        # either, so (same call as the removed slap/push/sitting heuristics
+        # above) shipping an unvalidated guess is worse than not detecting
+        # 'angry' via this signal at all.
         return emotion_map['neutral']
 
     def detect_emotion(self, frame, language='hy'):
@@ -299,6 +309,32 @@ class VisionClassifier:
         r_hip = lm[mp.solutions.pose.PoseLandmark.RIGHT_HIP]
         l_hip = lm[mp.solutions.pose.PoseLandmark.LEFT_HIP]
         return nose.y > max(r_hip.y, l_hip.y) - 0.05
+
+    def _landmarks_visible(self, lm, *names):
+        """Whether every one of the given named pose landmarks individually
+        meets _MIN_LANDMARK_VISIBILITY.
+
+        _pose_is_reliable checks that 50% of *all 15* tracked landmarks are
+        visible, which a close-up/upper-body-only shot (a singer at a studio
+        mic, someone filmed from the chest up) can clear easily on
+        wrists/shoulders/nose alone while hips/knees/ankles are out of frame
+        — MediaPipe still emits *some* (x, y) for an occluded landmark, just
+        not a meaningful one. That's exactly what was producing a confident
+        "Running" on a video with no legs in frame at all: the aggregate
+        passed on upper-body landmarks while the leg landmarks _is_running
+        actually reads were noise. Each lower-body-reading heuristic below
+        (hands-on-hips, bent-over, arms-crossed, walking/running/sitting —
+        all of which read hip and/or knee/ankle coordinates) is gated on
+        visibility of exactly the landmarks it uses, not just the aggregate,
+        so an out-of-frame body part can't drive a confident-looking but
+        meaningless label. Upper-body-only heuristics (pointing, phone,
+        hand-up) don't need this extra gate — the landmarks they read are
+        already part of the aggregate check and tend to be in frame
+        together."""
+        return all(
+            lm[getattr(mp.solutions.pose.PoseLandmark, name)].visibility >= self._MIN_LANDMARK_VISIBILITY
+            for name in names
+        )
 
     def _is_walking(self, lm):
         r_ankle = lm[mp.solutions.pose.PoseLandmark.RIGHT_ANKLE]
@@ -432,19 +468,20 @@ class VisionClassifier:
         # kind of unreliable geometry can't actually support.
         if r_wrist.y < (nose.y - 0.2) or l_wrist.y < (nose.y - 0.2):
             actions.append(action_map['hand_up'])
-        if self._is_hands_on_hips(lm):
+        if self._landmarks_visible(lm, 'RIGHT_HIP', 'LEFT_HIP') and self._is_hands_on_hips(lm):
             actions.append(action_map['hands_on_hips'])
         if self._is_pointing(lm):
             actions.append(action_map['pointing'])
-        if self._is_bent_over(lm):
+        if self._landmarks_visible(lm, 'RIGHT_HIP', 'LEFT_HIP') and self._is_bent_over(lm):
             actions.append(action_map['bent_over'])
-        if self._is_running(lm):
-            actions.append(action_map['running'])
-        elif self._is_walking(lm):
-            actions.append(action_map['walking'])
-        elif self._is_sitting(lm):
-            actions.append(action_map['sitting'])
-        if self._is_arms_crossed(lm):
+        if self._landmarks_visible(lm, 'RIGHT_HIP', 'LEFT_HIP', 'RIGHT_KNEE', 'LEFT_KNEE', 'RIGHT_ANKLE', 'LEFT_ANKLE'):
+            if self._is_running(lm):
+                actions.append(action_map['running'])
+            elif self._is_walking(lm):
+                actions.append(action_map['walking'])
+            elif self._is_sitting(lm):
+                actions.append(action_map['sitting'])
+        if self._landmarks_visible(lm, 'RIGHT_HIP', 'LEFT_HIP') and self._is_arms_crossed(lm):
             actions.append(action_map['arms_crossed'])
         if self._is_phone(lm, detected_objects):
             actions.append(action_map['phone'])

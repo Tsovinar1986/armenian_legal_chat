@@ -334,6 +334,10 @@ class LegalVisionService:
                             continue
                         frame_actions.extend(self.classifier.classify_actions(crop, objects_seen, language=language))
                     action_samples.append(frame_actions)
+                    # Emotion detection disabled for now (commented out, not
+                    # removed — re-enable by uncommenting this call plus the
+                    # emotion_changes block and the "emotion"/"emotion_changes"
+                    # entries in the return dict below).
                     # detect_emotion() runs its own independent face search
                     # (MediaPipe FaceMesh / Haar cascade) and already returns
                     # None on its own when no face is found — gating this on
@@ -341,7 +345,7 @@ class LegalVisionService:
                     # than necessary and could suppress a real, visible face
                     # (e.g. a close-up shot) that YOLO's person detector
                     # didn't confidently box.
-                    emotion_samples.append(self.classifier.detect_emotion(frame, language=language))
+                    # emotion_samples.append(self.classifier.detect_emotion(frame, language=language))
                     # Non-person objects (vehicles, a phone, etc. — see
                     # VisionClassifier._DETECTED_CLASSES) tracked regardless of
                     # whether a person is also in the frame, same as
@@ -356,15 +360,19 @@ class LegalVisionService:
         finally:
             cap.release()
 
+        # Emotion detection disabled for now (see emotion_samples.append(...)
+        # above, commented out) — emotion_changes computation and the
+        # "emotion"/"emotion_changes" return entries are commented out to
+        # match, not removed. To re-enable: uncomment all three.
         # Distinct emotions in the order they were first seen, collapsing
         # consecutive repeats — e.g. [neutral, sad] means the face's
         # expression (mouth shape is the main signal _infer_emotion_from_landmarks
         # reads) shifted from neutral to sad at some point in the video, not
         # just what the majority-vote final emotion happened to be.
-        emotion_changes = []
-        for e in emotion_samples:
-            if e and (not emotion_changes or emotion_changes[-1] != e):
-                emotion_changes.append(e)
+        # emotion_changes = []
+        # for e in emotion_samples:
+        #     if e and (not emotion_changes or emotion_changes[-1] != e):
+        #         emotion_changes.append(e)
 
         # min_ratio=0.25 (needing recurrence in only ~3 of 12 sampled frames)
         # was measured against real footage to still let contradictory noise
@@ -375,8 +383,8 @@ class LegalVisionService:
         # of sampled frames to agree before an action is reported.
         return {
             "actions": sorted(_confirmed_items(action_samples, min_ratio=0.4)),
-            "emotion": _majority_emotion(emotion_samples),
-            "emotion_changes": emotion_changes,
+            "emotion": None,
+            "emotion_changes": [],
             "objects": sorted(_confirmed_items(object_samples, min_ratio=0.4)),
             "frames_analyzed": frames_analyzed,
         }
@@ -428,6 +436,10 @@ class LegalVisionService:
         negative_labels = {
             emotion_labels.get('sad'),
             emotion_labels.get('angry'),
+            # Lip-biting reads as a nervous/anxious tell, the same "anxious
+            # mood" MENTAL_HEALTH_SUGGESTION already talks about — not just
+            # sad/angry expressions.
+            emotion_labels.get('biting_lip'),
         }
         self._check_mental_health_concern(emotion, negative_labels, language=language)
         if self.state.get_mental_health_concern():

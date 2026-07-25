@@ -141,23 +141,6 @@ class LegalAIController:
         except Exception as ex:
             print(f"⚠️ Error: {ex}")
 
-    def handle_mic(self):
-        if not self.state.mic_active:
-            print("\n🎙️ Microphone is off. Press [v] to turn it on first.")
-            return
-        print("\n🤖 AI: Ինչպե՞ս կարող եմ օգնել ձեզ այսօր...")
-        try:
-            user_speech = self.voice.listen_once()
-            if user_speech:
-                user_speech = unicodedata.normalize('NFC', user_speech).strip()
-                print(f"\n👤 You: {user_speech}")
-                response = self.agent.get_advice(user_speech, self.conversation_history)
-                print(f"\n⚖️ Legal AI:\n{response}")
-                self.conversation_history.append({"role": "user", "text": user_speech})
-                self.conversation_history.append({"role": "bot", "text": response})
-        except Exception as e:
-            print(f"🎙️ Mic error: {e}")
-
     def handle_typed_text(self):
         print("\n⌨️ Type your legal question. Press ENTER twice to submit:")
         _flush_stdin()
@@ -236,7 +219,7 @@ def main():
     def on_press(key):
         if not state.terminal_input_active:
             try:
-                if hasattr(key, 'char') and key.char in ['m', 't', 'u', 'q', 'v']:
+                if hasattr(key, 'char') and key.char in ['t', 'u', 'q', 'v']:
                     state.current_action = key.char
             except: pass
 
@@ -244,7 +227,7 @@ def main():
     if keyboard is not None:
         listener = keyboard.Listener(on_press=on_press)
         listener.start()
-        print("\n🎮 CONTROLS: [m]ic, [t]ype, [u]pload (doc/video), [v]oice on/off, [q]uit")
+        print("\n🎮 CONTROLS: [t]ype, [u]pload (doc/video), [v]oice on/off, [q]uit")
     else:
         print("\n✅ Keyboard listener disabled. Use the main app interface for input.")
 
@@ -255,8 +238,7 @@ def main():
                 action = state.current_action
                 state.current_action = None
                 state.terminal_input_active = True
-                if action == 'm': controller.handle_mic()
-                elif action == 't': controller.handle_typed_text()
+                if action == 't': controller.handle_typed_text()
                 elif action == 'u': controller.handle_upload()
                 elif action == 'v':
                     state.mic_active = not state.mic_active

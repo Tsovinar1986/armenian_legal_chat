@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import speech_recognition as sr
 import stripe
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
@@ -1385,7 +1386,10 @@ def _extract_wav(src_path: str, timeout: int = 60) -> str:
     return wav_path
 
 
-def _recognize_wav(wav_path: str, language: str, try_other_locales: bool = False, min_chars: int = 0) -> tuple[str, str]:
+def _recognize_wav(
+    wav_path: str, language: str, try_other_locales: bool = False, min_chars: int = 0,
+    offset: float | None = None, duration: float | None = None,
+) -> tuple[str, str]:
     """Shared recognize_google() call — same one the CLI's mic loop
     (src/services/voice.py) uses — behind the app's short language codes.
 
@@ -1413,11 +1417,16 @@ def _recognize_wav(wav_path: str, language: str, try_other_locales: bool = False
     (or, with try_other_locales=False, nothing is returned) — see
     MIN_VIDEO_TRANSCRIPT_CHARS.
 
+    `offset`/`duration` (seconds): restrict recognition to a slice of the
+    file instead of the whole thing — used by _transcribe_video_audio to
+    run recognition per speech-like segment only (see
+    _speech_music_segments), rather than on the whole track at once.
+
     Returns (transcript, detected_language_code); detected_language_code is
     "" when no locale produced a usable transcript."""
     recognizer = sr.Recognizer()
     with sr.AudioFile(wav_path) as source:
-        audio = recognizer.record(source)
+        audio = recognizer.record(source, offset=offset, duration=duration)
 
     preferred_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
     attempts = [(language, preferred_locale)]
@@ -1454,25 +1463,154 @@ def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
         return False
 
 
+# Segment length for the speech/music split below. Short enough that a clip
+# alternating between talking and a song doesn't get one track-wide verdict,
+# long enough to give the classifier below a meaningful amount of audio to
+# work with.
+_SPEECH_MUSIC_SEGMENT_SECONDS = 6.0
+
+# AudioSet event-classification model (527 labels, includes distinct
+# "Speech"/"Male speech"/etc. vs "Music"/"Singing"/"Choir"/etc. classes) used
+# to tell spoken dialogue apart from singing/music — see _segment_is_speech.
+# Replaces an earlier signal-processing heuristic (energy-envelope
+# modulation) that wasn't accurate enough to do this without either
+# dropping real short speech or letting song fragments through; real-world
+# testing against actual uploads showed both failure modes, and a coarse
+# heuristic can't be tuned to avoid both at once. This is a real trained
+# classifier instead, so it can gate *whether to attempt* recognition at
+# all (skipping recognize_google entirely for music/singing segments) with
+# actual confidence, rather than only filtering after the fact.
+_AUDIO_EVENT_MODEL_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
+_SPEECH_LABEL_KEYWORDS = ("speech", "narration", "monologue", "conversation")
+_MUSIC_LABEL_KEYWORDS = ("music", "sing", "song", "choir", "chant", "rap", "instrument", "yodel")
+
+_audio_event_extractor = None
+_audio_event_model = None
+
+
+def _get_audio_event_classifier():
+    """Lazily loads the AST AudioSet model + feature extractor (~330MB, one-
+    time download to the HF cache) on first use, mirroring how
+    get_vision_service() lazy-loads YOLO/MediaPipe — so a server that never
+    handles a video upload never pays this cost."""
+    global _audio_event_extractor, _audio_event_model
+    if _audio_event_model is None:
+        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+        print("🎧 Loading audio event classifier (speech vs. music/singing) on first use...")
+        _audio_event_extractor = AutoFeatureExtractor.from_pretrained(_AUDIO_EVENT_MODEL_ID)
+        _audio_event_model = AutoModelForAudioClassification.from_pretrained(_AUDIO_EVENT_MODEL_ID)
+        _audio_event_model.eval()
+    return _audio_event_extractor, _audio_event_model
+
+
+def _segment_is_speech(samples: "np.ndarray", sample_rate: int) -> bool:
+    """Classifies one mono audio chunk as speech (True) or music/singing
+    (False) using the AST AudioSet classifier. AudioSet is multi-label
+    (sigmoid, not softmax) with many overlapping fine-grained labels (e.g.
+    "Music", "Singing", "Choir", "A capella" can all fire at once on one
+    clip), so this sums predicted probability across every label matching
+    speech-related keywords vs. every label matching music/singing-related
+    keywords and compares the two totals, rather than trusting a single
+    top-1 label."""
+    import torch
+
+    extractor, model = _get_audio_event_classifier()
+    waveform = samples.astype(np.float32) / 32768.0  # int16 PCM -> [-1, 1] float
+    inputs = extractor(waveform, sampling_rate=sample_rate, return_tensors="pt")
+    with torch.no_grad():
+        probs = torch.sigmoid(model(**inputs).logits)[0]
+    id2label = model.config.id2label
+    speech_score = sum(
+        probs[i].item() for i, name in id2label.items()
+        if any(k in name.lower() for k in _SPEECH_LABEL_KEYWORDS)
+    )
+    music_score = sum(
+        probs[i].item() for i, name in id2label.items()
+        if any(k in name.lower() for k in _MUSIC_LABEL_KEYWORDS)
+    )
+    return speech_score >= music_score
+
+
+def _speech_music_segments(wav_path: str, segment_seconds: float = _SPEECH_MUSIC_SEGMENT_SECONDS) -> list[tuple[float, float, bool]]:
+    """Splits the extracted WAV into segment_seconds-long windows and
+    classifies each as speech or music/singing (see _segment_is_speech).
+    Returns a list of (start_seconds, end_seconds, is_speech) tuples
+    covering the whole track — a short trailing sliver under 1 second is
+    dropped rather than judged on too little data.
+
+    Any failure (unexpected WAV format, classifier not loadable, etc.)
+    fails open: the whole track is returned as a single speech segment,
+    i.e. the old whole-file-transcription behavior, rather than silently
+    losing the transcript."""
+    try:
+        with wave.open(wav_path, "rb") as wf:
+            sample_rate = wf.getframerate()
+            sample_width = wf.getsampwidth()
+            n_frames = wf.getnframes()
+            raw = wf.readframes(n_frames)
+        if sample_width != 2:  # _extract_wav always requests 16-bit PCM
+            raise ValueError(f"unexpected sample width {sample_width}")
+        samples = np.frombuffer(raw, dtype=np.int16)
+        if len(samples) == 0:
+            return []
+
+        seg_len = int(segment_seconds * sample_rate)
+        segments = []
+        for start in range(0, len(samples), seg_len):
+            chunk = samples[start:start + seg_len]
+            if len(chunk) < sample_rate:  # under 1s -- not enough to judge
+                continue
+            segments.append((
+                start / sample_rate,
+                (start + len(chunk)) / sample_rate,
+                _segment_is_speech(chunk, sample_rate),
+            ))
+        return segments or [(0.0, len(samples) / sample_rate, True)]
+    except Exception:
+        try:
+            with wave.open(wav_path, "rb") as wf:
+                duration = wf.getnframes() / wf.getframerate()
+        except Exception:
+            return []
+        return [(0.0, duration, True)]
+
+
 def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, str]:
-    """Best-effort: extract + transcribe whatever speech is in a video's
-    audio track for the upload analysis. Unlike /api/speech-to-text, a
-    failure here (no audio track, unrecognized speech, no network) is not
-    fatal to the upload — it just means no transcript, so this always
-    returns a (text, has_nonspeech_audio, detected_language) triple
-    ("", False, "" on failure) instead of raising. has_nonspeech_audio is
-    only meaningful when text is empty — it tells the caller whether the
-    track had audible content (possibly music/background sound) that just
-    didn't transcribe as speech in any supported language. detected_language
-    is which of the app's supported languages ("hy"/"en"/"ru") the speech was
-    actually recognized in — see _recognize_wav's per-locale fallback — which
-    may differ from the `language` the request was made with."""
+    """Best-effort: extract + transcribe whatever *spoken* words are in a
+    video's audio track for the upload analysis. Segments classified as
+    music/singing (see _speech_music_segments) are skipped entirely and
+    never sent to recognize_google, so sung lyrics are never turned into
+    text regardless of language — the AST classifier is accurate enough to
+    gate this upfront rather than only filtering suspicious results after
+    the fact. If a talking segment and a sung segment both appear in the
+    same clip, only the talking segment's words end up in the result.
+    Unlike /api/speech-to-text, a failure here (no audio track, unrecognized
+    speech, no network) is not fatal to the upload — it just means no
+    transcript, so this always returns a (text, has_nonspeech_audio,
+    detected_language) triple ("", False, "" on failure) instead of
+    raising. has_nonspeech_audio is only meaningful when text is empty — it
+    tells the caller whether the track had audible content (music, a song,
+    unclear speech, background noise) that just didn't end up as
+    transcribed speech. detected_language is which of the app's supported
+    languages ("hy"/"en"/"ru") the speech was actually recognized in — see
+    _recognize_wav's per-locale fallback — which may differ from the
+    `language` the request was made with."""
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
-        text, detected_language = _recognize_wav(
-            wav_path, language, try_other_locales=True, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS
-        )
+        speech_parts = []
+        detected_language = ""
+        for start, end, is_speech in _speech_music_segments(wav_path):
+            if not is_speech:
+                continue
+            text, code = _recognize_wav(
+                wav_path, language, try_other_locales=True, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS,
+                offset=start, duration=end - start,
+            )
+            if text:
+                speech_parts.append(text)
+                detected_language = detected_language or code
+        text = " ".join(speech_parts)
         has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
         return text, has_nonspeech_audio, detected_language
     except Exception:
@@ -1614,6 +1752,22 @@ async def upload_file(
 MAX_VIDEO_LINK_DURATION_SECONDS = 20 * 60
 
 
+def _video_file_has_audio_stream(video_path: str, timeout: int = 30) -> bool:
+    """ffprobe check: does this downloaded file actually contain an audio
+    stream? Used by _download_video_from_url — see its docstring for why
+    this matters (some yt-dlp format listings claim an audio codec that the
+    actual downloaded stream doesn't contain)."""
+    try:
+        proc = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a",
+             "-show_entries", "stream=index", "-of", "csv=p=0", video_path],
+            capture_output=True, text=True, timeout=timeout,
+        )
+        return bool(proc.stdout.strip())
+    except Exception:
+        return False
+
+
 def _download_video_from_url(url: str) -> str:
     """Downloads a video from a YouTube/TikTok/Instagram/etc. link (any site
     yt-dlp supports) into a fresh temp directory, so it can be run through
@@ -1624,6 +1778,21 @@ def _download_video_from_url(url: str) -> str:
     capped to a modest resolution (this pipeline downscales to 960px width
     internally anyway, and speech-to-text only needs the audio track) to
     keep it fast and small.
+
+    Tries a short list of format selectors in order, verifying with ffprobe
+    that the downloaded file actually has an audio stream before accepting
+    it — checked against a real TikTok video, yt-dlp's format listing
+    claimed every available format included AAC audio, but the actual
+    highest-resolution CDN variant "best" resolved to was silently
+    video-only, silently producing a video the speech pipeline could never
+    find any words in no matter how good the classifier logic downstream
+    was. `download` (TikTok's own default, watermarked link) is tried last
+    specifically because it reliably included real audio in that test, as a
+    fallback for whatever site-specific quirk causes the first format to
+    come up silent. If every attempt downloads but none has audio (e.g. the
+    video is genuinely silent), the last successful download is still
+    returned — the vision analysis half of the pipeline doesn't need audio,
+    so a video-only file is a worse-than-ideal result, not a failure.
 
     Returns the local path to the downloaded video file."""
     import yt_dlp
@@ -1639,25 +1808,42 @@ def _download_video_from_url(url: str) -> str:
         )
 
     tmp_dir = tempfile.mkdtemp(prefix="video_link_")
-    download_opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
-        "format": "best[height<=480]/best",
-        "merge_output_format": "mp4",
-    }
-    with yt_dlp.YoutubeDL(download_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        downloaded_path = ydl.prepare_filename(info)
+    format_attempts = ["best[height<=480]/best", "download"]
 
-    if not os.path.exists(downloaded_path):
-        # merge_output_format can change the actual extension (e.g. a
-        # separately-downloaded webm video+audio pair gets merged into .mp4).
-        candidate = os.path.splitext(downloaded_path)[0] + ".mp4"
+    downloaded_path = None
+    for i, fmt in enumerate(format_attempts):
+        # Each attempt gets its own output filename (attempt0_/attempt1_...)
+        # — reusing the same path across attempts made yt-dlp silently skip
+        # re-downloading when a file already existed there from the
+        # previous (audio-less) attempt, defeating the whole fallback.
+        download_opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "outtmpl": os.path.join(tmp_dir, f"attempt{i}_%(id)s.%(ext)s"),
+            "format": fmt,
+            "merge_output_format": "mp4",
+        }
+        try:
+            with yt_dlp.YoutubeDL(download_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                candidate = ydl.prepare_filename(info)
+        except Exception:
+            continue  # this format isn't available/failed -- try the next one
+
         if not os.path.exists(candidate):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise RuntimeError("Download completed but the output file wasn't found.")
-        downloaded_path = candidate
+            # merge_output_format can change the actual extension (e.g. a
+            # separately-downloaded webm video+audio pair gets merged into .mp4).
+            candidate = os.path.splitext(candidate)[0] + ".mp4"
+        if not os.path.exists(candidate):
+            continue
+
+        downloaded_path = candidate  # keep as best-so-far even if audio-less
+        if _video_file_has_audio_stream(candidate):
+            return downloaded_path
+
+    if downloaded_path is None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise RuntimeError("Download completed but the output file wasn't found.")
     return downloaded_path
 
 
