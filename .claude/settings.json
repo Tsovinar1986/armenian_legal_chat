@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m venv finetune_env)",
+      "Bash(./finetune_env/bin/pip install *)"
+    ]
+  }
+}
