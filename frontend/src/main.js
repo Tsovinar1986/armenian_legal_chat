@@ -8,6 +8,10 @@ const btnSend = document.getElementById("btnSend");
 const btnMic = document.getElementById("btnMic");
 const btnUpload = document.getElementById("btnUpload");
 const fileInput = document.getElementById("fileInput");
+const btnLink = document.getElementById("btnLink");
+const linkRow = document.getElementById("linkRow");
+const videoLinkInput = document.getElementById("videoLinkInput");
+const btnLinkSubmit = document.getElementById("btnLinkSubmit");
 const consoleDot = document.getElementById("liveDot");
 const backendPill = document.getElementById("backendPill");
 const backendStatus = document.getElementById("backendStatus");
@@ -83,6 +87,9 @@ function setComposerEnabled(on) {
   btnSend.disabled = !on;
   btnMic.disabled = !on;
   btnUpload.disabled = !on;
+  btnLink.disabled = !on;
+  btnLinkSubmit.disabled = !on;
+  videoLinkInput.disabled = !on;
 }
 
 function setBackendStatus(online) {
@@ -262,7 +269,38 @@ btnMic.addEventListener("click", () => {
   }
 });
 
-// ---------- Upload: doc -> case DB, video -> action/emotion + speech transcript ----------
+// ---------- Upload: doc -> case DB, video (file or link) -> action/emotion + speech transcript ----------
+
+// Shared by the file-upload flow and the video-link flow below — both POST
+// to a backend endpoint that returns the same {kind: "video", ...} shape
+// (see api.py's _analyze_video_upload), so there's one place that turns
+// that response into a chat bubble instead of two drifting copies.
+function renderVideoAnalysisRow(data) {
+  const actions = data.actions && data.actions.length ? data.actions.join(", ") : "none detected";
+  let spoken;
+  if (data.transcript) {
+    spoken = `<br><strong>🗣️ What was said:</strong> "${data.transcript}"`;
+  } else if (data.has_nonspeech_audio) {
+    spoken = "<br><strong>🎵 Audio:</strong> sound was heard (possibly music or background audio), but no speech was recognized";
+  } else {
+    spoken = `<br><strong>🗣️ What was said:</strong> no speech detected — based on action detection, here's what's happening: ${actions}`;
+  }
+  const emotionChanges = data.emotion_changes && data.emotion_changes.length > 1
+    ? `<br><strong>Emotion changed during video:</strong> ${data.emotion_changes.join(" → ")}`
+    : "";
+  const objects = data.objects && data.objects.length
+    ? `<br><strong>Objects seen:</strong> ${data.objects.join(", ")}`
+    : "";
+  addRow(
+    "bot", "AI",
+    `✅ Analyzed ${data.frames_analyzed} sampled frame(s).<br>` +
+    `<strong>Actions:</strong> ${actions}<br>` +
+    `<strong>Emotion:</strong> ${data.emotion || "n/a"}` +
+    emotionChanges + objects +
+    spoken,
+    { html: true }
+  );
+}
 
 btnUpload.addEventListener("click", () => {
   if (busy) return;
@@ -310,27 +348,7 @@ fileInput.addEventListener("change", async () => {
     if (!res.ok || data.success === false) {
       addRow("system", null, data.message || `HTTP ${res.status}`, { warn: true });
     } else if (data.kind === "video") {
-      const actions = data.actions && data.actions.length ? data.actions.join(", ") : "none detected";
-      let spoken;
-      if (data.transcript) {
-        spoken = `<br><strong>🗣️ What was said:</strong> "${data.transcript}"`;
-      } else if (data.has_nonspeech_audio) {
-        spoken = "<br><strong>🎵 Audio:</strong> sound was heard (possibly music or background audio), but no speech was recognized";
-      } else {
-        spoken = `<br><strong>🗣️ What was said:</strong> no speech detected — based on action detection, here's what's happening: ${actions}`;
-      }
-      const emotionChanges = data.emotion_changes && data.emotion_changes.length > 1
-        ? `<br><strong>Emotion changed during video:</strong> ${data.emotion_changes.join(" → ")}`
-        : "";
-      addRow(
-        "bot", "AI",
-        `✅ Analyzed ${data.frames_analyzed} sampled frame(s).<br>` +
-        `<strong>Actions:</strong> ${actions}<br>` +
-        `<strong>Emotion:</strong> ${data.emotion || "n/a"}` +
-        emotionChanges +
-        spoken,
-        { html: true }
-      );
+      renderVideoAnalysisRow(data);
     } else {
       addRow("system", null, `✅ ${data.message}`);
     }
@@ -342,9 +360,59 @@ fileInput.addEventListener("change", async () => {
   }
 });
 
+// ---------- Video link (YouTube / TikTok / Instagram / etc. via /api/upload-link) ----------
+
+btnLink.addEventListener("click", () => {
+  if (busy) return;
+  const showing = !linkRow.hidden;
+  linkRow.hidden = showing;
+  if (!showing) videoLinkInput.focus();
+});
+
+async function submitVideoLink() {
+  const url = videoLinkInput.value.trim();
+  if (!url || busy) return;
+
+  setComposerEnabled(false);
+  const working = addRow(
+    "system", null,
+    `🔗 Downloading and analyzing ${url}… (can take a while depending on the video's length)`
+  );
+
+  try {
+    const form = new FormData();
+    form.append("url", url);
+    form.append("language", currentLanguage);
+    if (sessionId) form.append("session_id", sessionId);
+
+    const res = await fetch("/api/upload-link", { method: "POST", body: form });
+    const data = await res.json();
+    working.row.remove();
+
+    if (!res.ok || data.success === false) {
+      addRow("system", null, data.message || `HTTP ${res.status}`, { warn: true });
+    } else {
+      renderVideoAnalysisRow(data);
+      videoLinkInput.value = "";
+      linkRow.hidden = true;
+    }
+  } catch (err) {
+    working.row.remove();
+    addRow("system", null, `⚠️ Video link analysis failed: ${err.message}`, { warn: true });
+  } finally {
+    setComposerEnabled(true);
+  }
+}
+
+btnLinkSubmit.addEventListener("click", submitVideoLink);
+videoLinkInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") submitVideoLink();
+});
+
 document.addEventListener("keydown", (e) => {
-  if (document.activeElement === typedInput) return;
+  if (document.activeElement === typedInput || document.activeElement === videoLinkInput) return;
   if (e.key === "t") typedInput.focus();
   if (e.key === "m") btnMic.click();
   if (e.key === "u") btnUpload.click();
+  if (e.key === "l") btnLink.click();
 });

@@ -83,6 +83,11 @@ python-multipart>=0.0.9
 # see README.md "Payments" section. Apple Pay/Google Pay require domain
 # verification in the Stripe Dashboard, which is outside this codebase.
 stripe>=9.0
+# Downloads a video from a YouTube/TikTok/Instagram/etc. link for
+# POST /api/upload-link, so it can run through the same analysis pipeline
+# as an uploaded file. Needs the same ffmpeg binary already required for
+# audio extraction elsewhere in this file.
+yt-dlp>=2024.1
 
 # --- Tests (tests/*.py) ---
 # Tests are plain unittest.TestCase classes (pytest can also collect and run

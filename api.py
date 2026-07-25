@@ -10,6 +10,7 @@
 import audioop
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import uuid
@@ -1482,6 +1483,73 @@ def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, 
             os.remove(wav_path)
 
 
+async def _analyze_video_upload(tmp_path: str, filename: str, language: str, session_id: str) -> dict:
+    """Runs the vision + speech-to-text analysis pipeline on a local video
+    file and, when session_id is given, appends a summary to that chat
+    session. Shared by /api/upload's video branch and /api/upload-link
+    (video URLs downloaded via yt-dlp), so both entry points produce
+    identical results once a local file exists on disk."""
+    vision_service = get_vision_service()
+    result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12, language)
+    transcript, has_nonspeech_audio, detected_language = await run_in_threadpool(
+        _transcribe_video_audio, tmp_path, language
+    )
+    result["transcript"] = transcript
+    result["has_nonspeech_audio"] = has_nonspeech_audio
+    result["transcript_language"] = detected_language
+
+    actions = ", ".join(result.get("actions") or []) or "none detected"
+    emotion_changes = result.get("emotion_changes") or []
+    if transcript:
+        # detected_language can differ from the request's own `language`
+        # (e.g. a Russian-language video while the portal is set to
+        # Armenian) — _recognize_wav already fell back across locales to
+        # find it, so say which one explicitly instead of silently
+        # presenting it as if it matched the UI language.
+        if detected_language and detected_language != language:
+            lang_name = STT_LANGUAGE_DISPLAY_NAMES.get(detected_language, detected_language)
+            speech_note = f"; spoken (in {lang_name}): \"{transcript}\""
+        else:
+            speech_note = f"; spoken: \"{transcript}\""
+    elif has_nonspeech_audio:
+        # The track has audible sound (music, singing, background noise,
+        # etc.) but nothing recognizable as speech in any supported
+        # language — worth saying explicitly instead of implying the video
+        # is silent.
+        speech_note = "; no speech detected — sound was heard (possibly music/a song or background audio)"
+    else:
+        # No speech to go on — fall back to describing what the action
+        # detection actually saw happening in the video instead.
+        speech_note = f"; no speech detected (based on action detection: {actions})"
+    emotion_note = (
+        f"; emotion changed during video: {' → '.join(emotion_changes)}"
+        if len(emotion_changes) > 1 else ""
+    )
+    objects_seen_list = result.get("objects") or []
+    # Non-person objects (a vehicle, a phone, etc.) seen alongside whatever
+    # actions/emotion were detected — e.g. a person next to a car — instead
+    # of leaving vehicles/objects out of the summary entirely just because a
+    # person was also in frame.
+    objects_note = f"; objects seen: {', '.join(objects_seen_list)}" if objects_seen_list else ""
+    video_summary = (
+        f"[Video '{filename}' analyzed — "
+        f"actions: {actions}; emotion: {result.get('emotion') or 'n/a'}"
+        + emotion_note + objects_note + speech_note
+        + "]"
+    )
+
+    if session_id:
+        # Each video starts a new case — clear this session's prior history
+        # first, so a follow-up chat about this video isn't fed a previous,
+        # unrelated video's analysis as context.
+        await run_in_threadpool(portal_store.clear_chat_messages, session_id, "legal")
+        await run_in_threadpool(
+            portal_store.append_chat_message, session_id, "legal", "bot", video_summary
+        )
+
+    return {"success": True, "kind": "video", **result}
+
+
 @app.post("/api/upload")
 async def upload_file(
     file: UploadFile = File(...),
@@ -1532,77 +1600,90 @@ async def upload_file(
 
             return {"success": True, "kind": "document", "message": status}
 
-        vision_service = get_vision_service()
-        result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12, language)
-        transcript, has_nonspeech_audio, detected_language = await run_in_threadpool(
-            _transcribe_video_audio, tmp_path, language
-        )
-        result["transcript"] = transcript
-        result["has_nonspeech_audio"] = has_nonspeech_audio
-        result["transcript_language"] = detected_language
-
-        actions = ", ".join(result.get("actions") or []) or "none detected"
-        emotion_changes = result.get("emotion_changes") or []
-        if transcript:
-            # detected_language can differ from the request's own `language`
-            # (e.g. a Russian-language video uploaded while the portal is
-            # set to Armenian) — _recognize_wav already fell back across
-            # locales to find it, so say which one explicitly instead of
-            # silently presenting it as if it matched the UI language.
-            if detected_language and detected_language != language:
-                lang_name = STT_LANGUAGE_DISPLAY_NAMES.get(detected_language, detected_language)
-                speech_note = f"; spoken (in {lang_name}): \"{transcript}\""
-            else:
-                speech_note = f"; spoken: \"{transcript}\""
-        elif has_nonspeech_audio:
-            # The track has audible sound (music, singing, background
-            # noise, etc.) but nothing recognizable as speech in any
-            # supported language — worth saying explicitly instead of
-            # implying the video is silent.
-            speech_note = "; no speech detected — sound was heard (possibly music/a song or background audio)"
-        else:
-            # No speech to go on — fall back to describing what the action
-            # detection actually saw happening in the video instead.
-            speech_note = f"; no speech detected (based on action detection: {actions})"
-        emotion_note = (
-            f"; emotion changed during video: {' → '.join(emotion_changes)}"
-            if len(emotion_changes) > 1 else ""
-        )
-        objects_seen_list = result.get("objects") or []
-        # Non-person objects (a vehicle, a phone, etc.) seen alongside
-        # whatever actions/emotion were detected — e.g. a person next to a
-        # car — instead of leaving vehicles/objects out of the summary
-        # entirely just because a person was also in frame.
-        objects_note = f"; objects seen: {', '.join(objects_seen_list)}" if objects_seen_list else ""
-        video_summary = (
-            f"[Uploaded video '{file.filename}' analyzed — "
-            f"actions: {actions}; emotion: {result.get('emotion') or 'n/a'}"
-            + emotion_note + objects_note + speech_note
-            + "]"
-        )
-
-        # NOTE: this used to also ask the legal agent for an actual
-        # interpretation/analysis of video_summary. Disabled for now — see
-        # the matching note in the document-upload branch above (the
-        # armenia-lawyer-router model is currently producing garbled output
-        # on every prompt). Re-enable agent.get_advice(video_summary, None,
-        # language) once that's fixed.
-
-        if session_id:
-            # Each video upload starts a new case — clear this session's prior
-            # history first, so a follow-up chat about this video isn't fed a
-            # previous, unrelated video's analysis as context.
-            await run_in_threadpool(portal_store.clear_chat_messages, session_id, "legal")
-            await run_in_threadpool(
-                portal_store.append_chat_message, session_id, "legal", "bot", video_summary
-            )
-
-        return {"success": True, "kind": "video", **result}
+        return await _analyze_video_upload(tmp_path, file.filename, language, session_id)
     except Exception as exc:
         return {"success": False, "message": f"Could not process '{file.filename}': {exc}"}
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+# Cap on a linked video's length before it's even downloaded — this pipeline
+# only samples up to 12 frames regardless of video length, so a multi-hour
+# link buys no analysis benefit, only a slow/expensive download.
+MAX_VIDEO_LINK_DURATION_SECONDS = 20 * 60
+
+
+def _download_video_from_url(url: str) -> str:
+    """Downloads a video from a YouTube/TikTok/Instagram/etc. link (any site
+    yt-dlp supports) into a fresh temp directory, so it can be run through
+    the exact same analysis pipeline as an uploaded file
+    (_analyze_video_upload). Checks the video's duration via yt-dlp's
+    metadata-only extraction *before* downloading anything, and rejects
+    anything over MAX_VIDEO_LINK_DURATION_SECONDS. The download itself is
+    capped to a modest resolution (this pipeline downscales to 960px width
+    internally anyway, and speech-to-text only needs the audio track) to
+    keep it fast and small.
+
+    Returns the local path to the downloaded video file."""
+    import yt_dlp
+
+    probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    with yt_dlp.YoutubeDL(probe_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+    duration = info.get("duration") or 0
+    if duration and duration > MAX_VIDEO_LINK_DURATION_SECONDS:
+        raise ValueError(
+            f"Video is {duration // 60} min long — linked videos are limited to "
+            f"{MAX_VIDEO_LINK_DURATION_SECONDS // 60} min."
+        )
+
+    tmp_dir = tempfile.mkdtemp(prefix="video_link_")
+    download_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
+        "format": "best[height<=480]/best",
+        "merge_output_format": "mp4",
+    }
+    with yt_dlp.YoutubeDL(download_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        downloaded_path = ydl.prepare_filename(info)
+
+    if not os.path.exists(downloaded_path):
+        # merge_output_format can change the actual extension (e.g. a
+        # separately-downloaded webm video+audio pair gets merged into .mp4).
+        candidate = os.path.splitext(downloaded_path)[0] + ".mp4"
+        if not os.path.exists(candidate):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            raise RuntimeError("Download completed but the output file wasn't found.")
+        downloaded_path = candidate
+    return downloaded_path
+
+
+@app.post("/api/upload-link")
+async def upload_video_link(
+    url: str = Form(...),
+    language: str = Form("hy"),
+    session_id: str = Form(None),
+):
+    """Same video analysis pipeline as /api/upload's video branch
+    (_analyze_video_upload), but for a YouTube/TikTok/Instagram/etc. link
+    instead of a local file: downloads the video via yt-dlp first, then
+    reuses the exact same analysis + summary + session-append logic so both
+    entry points behave identically."""
+    if not url or not url.strip():
+        return {"success": False, "message": "No video URL was given."}
+
+    tmp_path = None
+    try:
+        tmp_path = await run_in_threadpool(_download_video_from_url, url.strip())
+        return await _analyze_video_upload(tmp_path, os.path.basename(tmp_path), language, session_id)
+    except Exception as exc:
+        return {"success": False, "message": f"Could not process video link: {exc}"}
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            shutil.rmtree(os.path.dirname(tmp_path), ignore_errors=True)
 
 
 @app.post("/api/speech-to-text")

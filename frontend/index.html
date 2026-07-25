@@ -49,12 +49,18 @@
       <div class="dock-controls">
         <button class="ctrl" id="btnMic" type="button" title="Record and transcribe via /api/speech-to-text"><kbd>m</kbd>🎤 Ask by voice</button>
         <button class="ctrl" id="btnUpload" type="button" title="Send to /api/upload"><kbd>u</kbd>📎 Upload doc / video</button>
+        <button class="ctrl" id="btnLink" type="button" title="Analyze a YouTube / TikTok / Instagram / etc. video link via /api/upload-link"><kbd>l</kbd>🔗 Video link</button>
         <!-- No `accept` restriction: /api/upload treats any non-video
              extension as a document (IngestionService has dedicated
              parsers for txt/xlsx/csv/json/docx/pdf and a generic
              best-effort text fallback for anything else), so the file
              picker shouldn't filter out formats the backend can handle. -->
         <input type="file" id="fileInput" hidden />
+      </div>
+
+      <div class="composer" id="linkRow" hidden>
+        <input type="text" id="videoLinkInput" placeholder="Paste a YouTube / TikTok / Instagram video link…" autocomplete="off" />
+        <button class="send" id="btnLinkSubmit" type="button">Analyze</button>
       </div>
 
       <div class="composer">
