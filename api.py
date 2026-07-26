@@ -10,6 +10,7 @@
 import audioop
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -21,7 +22,6 @@ from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
 import numpy as np
-import speech_recognition as sr
 import stripe
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -1339,18 +1339,9 @@ async def get_chat_history(session_id: str):
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv"}
 
-# Short app-wide language code -> Google Speech Recognition locale. Any code
-# not listed here falls back to hy-AM, same convention as _t()/get_crisis_response
-# falling back to English for unlisted codes elsewhere in the app.
-STT_LANGUAGE_MAP = {
-    "hy": "hy-AM",
-    "en": "en-US",
-    "ru": "ru-RU",
-}
-
 # Display names for surfacing which language a transcript was actually
-# recognized in (see _recognize_wav's per-locale fallback) when it differs
-# from the request's own `language`.
+# detected in (see _whisper_transcribe) when it differs from the request's
+# own `language`.
 STT_LANGUAGE_DISPLAY_NAMES = {
     "hy": "Armenian",
     "en": "English",
@@ -1359,15 +1350,13 @@ STT_LANGUAGE_DISPLAY_NAMES = {
 
 # A video's full audio track producing only a couple of characters/one short
 # word (e.g. "I am") is far more likely a spurious misrecognition of
-# music/singing/background noise than genuine dialogue — recognize_google has
-# no confidence score to lean on here. Below this length, a locale's result
-# is treated as not good enough and the next locale is tried instead (see
-# _recognize_wav's min_chars); if nothing clears the bar, the video is
-# reported as having audio but no reliable speech (see
-# _transcribe_video_audio) rather than confidently showing a couple of
-# probably-wrong words. Not applied to the live mic endpoint
-# (/api/speech-to-text), where a short "Yes"/"Stop" is a normal, expected
-# utterance rather than noise.
+# music/singing/background noise than genuine dialogue. Below this length, a
+# transcript is treated as not good enough to keep (see _whisper_transcribe's
+# min_chars); if nothing clears the bar, the video is reported as having
+# audio but no reliable speech (see _transcribe_video_audio) rather than
+# confidently showing a couple of probably-wrong words. Not applied to the
+# live mic endpoint (/api/speech-to-text), where a short "Yes"/"Stop" is a
+# normal, expected utterance rather than noise.
 MIN_VIDEO_TRANSCRIPT_CHARS = 8
 
 
@@ -1386,66 +1375,103 @@ def _extract_wav(src_path: str, timeout: int = 60) -> str:
     return wav_path
 
 
-def _recognize_wav(
-    wav_path: str, language: str, try_other_locales: bool = False, min_chars: int = 0,
-    offset: float | None = None, duration: float | None = None,
-) -> tuple[str, str]:
-    """Shared recognize_google() call — same one the CLI's mic loop
-    (src/services/voice.py) uses — behind the app's short language codes.
+# Whisper (openai-whisper) replaces recognize_google for both the mic
+# endpoint and video transcription — real-world testing showed Google's free
+# Web Speech API is noticeably less accurate for Armenian/Russian than
+# English, especially on real microphone audio (accent, background noise),
+# while Whisper is natively multilingual and was trained on Armenian data
+# directly (see stt_service/app.py, the standalone Whisper service this
+# reuses the model-loading/tuning from). "medium" trades a slower first
+# transcribe for noticeably better accuracy on lower-resource languages than
+# "small"/"base" — override with WHISPER_MODEL if that tradeoff needs
+# revisiting.
+_WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "medium")
+_whisper_model = None
 
-    By default this only tries the requested language's own locale, exactly
-    like before — this matters for the live mic endpoint
-    (/api/speech-to-text): the user is actively speaking in whatever
-    language the app's UI is currently set to, so if that locale can't make
-    sense of the audio the honest answer is "didn't catch that", not a
-    confidently-wrong transcript guessed by mis-hearing the same audio as a
-    *different* language (which is what naively trying every locale did —
-    Google's recognizer is eager to produce *something* for almost any
-    input, even the wrong language's audio).
 
-    `try_other_locales=True` (used by _transcribe_video_audio for uploaded
-    videos, where the actual spoken language is genuinely unknown and may
-    not match the UI's language) additionally falls back through the app's
-    other supported locales in turn when the preferred one comes up empty.
-    A locale simply not understanding the audio (UnknownValueError) just
-    moves on to the next locale; a service-level failure (RequestError —
-    network/quota) isn't locale-specific, so it's left to propagate
-    immediately rather than being retried per locale.
+def _get_whisper_model():
+    """Lazy-loaded so the server starts instantly and never pays this cost
+    if no request ever needs speech-to-text — same pattern as
+    get_vision_service()/_get_audio_event_classifier()."""
+    global _whisper_model
+    if _whisper_model is None:
+        import whisper
+        print(f"🗣️ Loading Whisper speech-to-text model ({_WHISPER_MODEL_SIZE}) on first use...")
+        _whisper_model = whisper.load_model(_WHISPER_MODEL_SIZE)
+    return _whisper_model
 
-    `min_chars`: a candidate transcript shorter than this (post-sanitize) is
-    treated as too unreliable to accept — the next locale is tried instead
-    (or, with try_other_locales=False, nothing is returned) — see
-    MIN_VIDEO_TRANSCRIPT_CHARS.
 
-    `offset`/`duration` (seconds): restrict recognition to a slice of the
-    file instead of the whole thing — used by _transcribe_video_audio to
-    run recognition per speech-like segment only (see
-    _speech_music_segments), rather than on the whole track at once.
+def _whisper_join_transcript(result: dict) -> str:
+    """result["text"] is Whisper's own concatenation of its segments, which
+    doesn't reliably insert a space at every segment boundary — on longer
+    clips (more than one segment) that shows up as two words from adjacent
+    segments getting glued together. Rebuilding the text by explicitly
+    joining each segment's (stripped) text with a single space guarantees a
+    word boundary at every seam regardless of what Whisper itself included.
+    Same fix as stt_service/app.py's _join_transcript."""
+    segments = result.get("segments") or []
+    if segments:
+        text = " ".join(seg.get("text", "").strip() for seg in segments if seg.get("text", "").strip())
+    else:
+        text = (result.get("text") or "").strip()
+    return re.sub(r"\s+", " ", text).strip()
 
-    Returns (transcript, detected_language_code); detected_language_code is
-    "" when no locale produced a usable transcript."""
-    recognizer = sr.Recognizer()
-    with sr.AudioFile(wav_path) as source:
-        audio = recognizer.record(source, offset=offset, duration=duration)
 
-    preferred_locale = STT_LANGUAGE_MAP.get(language, "hy-AM")
-    attempts = [(language, preferred_locale)]
-    if try_other_locales:
-        seen_locales = {preferred_locale}
-        for code, locale in STT_LANGUAGE_MAP.items():
-            if locale not in seen_locales:
-                seen_locales.add(locale)
-                attempts.append((code, locale))
+def _whisper_transcribe(audio_path: str, language: str = None, min_chars: int = 0) -> tuple[str, str]:
+    """Transcribes an audio/video file with Whisper. `language` is an
+    optional hint (Whisper's own ISO codes match this app's "hy"/"en"/"ru"
+    exactly, no locale-string mapping needed like recognize_google's
+    STT_LANGUAGE_MAP) — Whisper auto-detects the spoken language on its own
+    when this is omitted, which is what video/link transcription wants
+    (genuinely unknown spoken language) instead of manually looping over
+    locales the way _recognize_wav's try_other_locales did for Google.
 
-    for code, locale in attempts:
-        try:
-            raw_text = recognizer.recognize_google(audio, language=locale)
-        except sr.UnknownValueError:
-            continue
-        text = sanitize_transcript(raw_text, language=code)
-        if text and len(text) >= min_chars:
-            return text, code
+    no_speech_threshold=0.3 and condition_on_previous_text=False (not
+    Whisper's tuned-for-English defaults of 0.6/True) avoid it misjudging a
+    quieter or lower-resource-language segment as silence and skipping it,
+    or drifting into a repetition loop that eats the rest of the transcript
+    — both show up as "only got part of it" even though the whole thing was
+    said clearly. Same tuning as stt_service/app.py.
+
+    Returns (text, detected_language); text is "" if nothing usable was
+    recognized (post sanitize_transcript + min_chars, matching
+    _recognize_wav's contract)."""
+    model = _get_whisper_model()
+    result = model.transcribe(
+        audio_path,
+        language=language or None,
+        no_speech_threshold=0.3,
+        condition_on_previous_text=False,
+        fp16=False,
+    )
+    detected_language = result.get("language") or language or ""
+    text = sanitize_transcript(_whisper_join_transcript(result), language=detected_language)
+    if text and len(text) >= min_chars:
+        return text, detected_language
     return "", ""
+
+
+def _extract_wav_segment(wav_path: str, start: float, end: float) -> str:
+    """Slices [start, end) seconds out of an already-extracted 16kHz mono
+    WAV into its own temp WAV file. Whisper's transcribe() takes a file
+    path (no offset/duration params like speech_recognition's AudioFile
+    did), so per-segment transcription in _transcribe_video_audio needs an
+    actual file per segment. Caller is responsible for deleting the
+    returned path."""
+    with wave.open(wav_path, "rb") as wf:
+        sample_rate = wf.getframerate()
+        sample_width = wf.getsampwidth()
+        n_channels = wf.getnchannels()
+        wf.setpos(int(start * sample_rate))
+        frames = wf.readframes(int((end - start) * sample_rate))
+    fd, seg_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    with wave.open(seg_path, "wb") as out:
+        out.setnchannels(n_channels)
+        out.setsampwidth(sample_width)
+        out.setframerate(sample_rate)
+        out.writeframes(frames)
+    return seg_path
 
 
 def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
@@ -1577,24 +1603,26 @@ def _speech_music_segments(wav_path: str, segment_seconds: float = _SPEECH_MUSIC
 
 def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, str]:
     """Best-effort: extract + transcribe whatever *spoken* words are in a
-    video's audio track for the upload analysis. Segments classified as
-    music/singing (see _speech_music_segments) are skipped entirely and
-    never sent to recognize_google, so sung lyrics are never turned into
-    text regardless of language — the AST classifier is accurate enough to
-    gate this upfront rather than only filtering suspicious results after
-    the fact. If a talking segment and a sung segment both appear in the
-    same clip, only the talking segment's words end up in the result.
-    Unlike /api/speech-to-text, a failure here (no audio track, unrecognized
-    speech, no network) is not fatal to the upload — it just means no
-    transcript, so this always returns a (text, has_nonspeech_audio,
-    detected_language) triple ("", False, "" on failure) instead of
-    raising. has_nonspeech_audio is only meaningful when text is empty — it
-    tells the caller whether the track had audible content (music, a song,
+    video's audio track for the upload analysis, using Whisper (see
+    _whisper_transcribe) instead of recognize_google — same accuracy
+    motivation as /api/speech-to-text. Segments classified as music/singing
+    (see _speech_music_segments) are skipped entirely and never sent to
+    Whisper, so sung lyrics are never turned into text regardless of
+    language — the AST classifier is accurate enough to gate this upfront.
+    If a talking segment and a sung segment both appear in the same clip,
+    only the talking segment's words end up in the result. Unlike
+    /api/speech-to-text, a failure here (no audio track, unrecognized
+    speech) is not fatal to the upload — it just means no transcript, so
+    this always returns a (text, has_nonspeech_audio, detected_language)
+    triple ("", False, "" on failure) instead of raising.
+    has_nonspeech_audio is only meaningful when text is empty — it tells
+    the caller whether the track had audible content (music, a song,
     unclear speech, background noise) that just didn't end up as
-    transcribed speech. detected_language is which of the app's supported
-    languages ("hy"/"en"/"ru") the speech was actually recognized in — see
-    _recognize_wav's per-locale fallback — which may differ from the
-    `language` the request was made with."""
+    transcribed speech. detected_language is which language Whisper actually
+    detected the speech to be in — since `language` isn't passed as a hard
+    constraint here (the spoken language in an arbitrary video/link is
+    genuinely unknown), this may differ from the `language` the request was
+    made with."""
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
@@ -1603,10 +1631,11 @@ def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, 
         for start, end, is_speech in _speech_music_segments(wav_path):
             if not is_speech:
                 continue
-            text, code = _recognize_wav(
-                wav_path, language, try_other_locales=True, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS,
-                offset=start, duration=end - start,
-            )
+            seg_path = _extract_wav_segment(wav_path, start, end)
+            try:
+                text, code = _whisper_transcribe(seg_path, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS)
+            finally:
+                os.remove(seg_path)
             if text:
                 speech_parts.append(text)
                 detected_language = detected_language or code
@@ -1877,7 +1906,10 @@ async def speech_to_text(file: UploadFile = File(...), language: str = Form("hy"
     """Browser equivalent of the desktop CLI's mic input (src/services/voice.py
     listen_once): the browser records with MediaRecorder (webm/opus, ogg, or
     similar — never raw WAV), so this converts to a 16kHz mono WAV via ffmpeg
-    before handing it to the same recognize_google() call the CLI uses."""
+    before transcribing with Whisper (see _whisper_transcribe) — replaces an
+    earlier recognize_google-based version, which real-world testing showed
+    was noticeably less accurate for Armenian/Russian than English on real
+    microphone audio."""
     src_path = None
     wav_path = None
     try:
@@ -1889,16 +1921,12 @@ async def speech_to_text(file: UploadFile = File(...), language: str = Form("hy"
         def convert_and_transcribe():
             nonlocal wav_path
             wav_path = _extract_wav(src_path, timeout=30)
-            return _recognize_wav(wav_path, language)
+            return _whisper_transcribe(wav_path, language=language)
 
         text, detected_language = await run_in_threadpool(convert_and_transcribe)
         if not text:
             return {"success": False, "message": "Didn't catch valid speech — please try again."}
         return {"success": True, "text": text, "language": detected_language}
-    except sr.UnknownValueError:
-        return {"success": False, "message": "Didn't catch valid speech — please try again."}
-    except sr.RequestError as exc:
-        return {"success": False, "message": f"Speech recognition service error: {exc}"}
     except Exception as exc:
         return {"success": False, "message": f"Speech-to-text failed: {exc}"}
     finally:
