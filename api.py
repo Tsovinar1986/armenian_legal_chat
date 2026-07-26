@@ -21,7 +21,6 @@ from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Dict, Set
 from zoneinfo import ZoneInfo
 
-import numpy as np
 import stripe
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
@@ -1451,29 +1450,6 @@ def _whisper_transcribe(audio_path: str, language: str = None, min_chars: int = 
     return "", ""
 
 
-def _extract_wav_segment(wav_path: str, start: float, end: float) -> str:
-    """Slices [start, end) seconds out of an already-extracted 16kHz mono
-    WAV into its own temp WAV file. Whisper's transcribe() takes a file
-    path (no offset/duration params like speech_recognition's AudioFile
-    did), so per-segment transcription in _transcribe_video_audio needs an
-    actual file per segment. Caller is responsible for deleting the
-    returned path."""
-    with wave.open(wav_path, "rb") as wf:
-        sample_rate = wf.getframerate()
-        sample_width = wf.getsampwidth()
-        n_channels = wf.getnchannels()
-        wf.setpos(int(start * sample_rate))
-        frames = wf.readframes(int((end - start) * sample_rate))
-    fd, seg_path = tempfile.mkstemp(suffix=".wav")
-    os.close(fd)
-    with wave.open(seg_path, "wb") as out:
-        out.setnchannels(n_channels)
-        out.setsampwidth(sample_width)
-        out.setframerate(sample_rate)
-        out.writeframes(frames)
-    return seg_path
-
-
 def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
     """Cheap RMS-energy check on the extracted 16kHz mono WAV — distinguishes
     a track that's actually silent from one that has real sound (music,
@@ -1489,157 +1465,29 @@ def _wav_has_audio_content(wav_path: str, rms_threshold: int = 200) -> bool:
         return False
 
 
-# Segment length for the speech/music split below. Short enough that a clip
-# alternating between talking and a song doesn't get one track-wide verdict,
-# long enough to give the classifier below a meaningful amount of audio to
-# work with.
-_SPEECH_MUSIC_SEGMENT_SECONDS = 6.0
-
-# AudioSet event-classification model (527 labels, includes distinct
-# "Speech"/"Male speech"/etc. vs "Music"/"Singing"/"Choir"/etc. classes) used
-# to tell spoken dialogue apart from singing/music — see _segment_is_speech.
-# Replaces an earlier signal-processing heuristic (energy-envelope
-# modulation) that wasn't accurate enough to do this without either
-# dropping real short speech or letting song fragments through; real-world
-# testing against actual uploads showed both failure modes, and a coarse
-# heuristic can't be tuned to avoid both at once. This is a real trained
-# classifier instead, so it can gate *whether to attempt* recognition at
-# all (skipping recognize_google entirely for music/singing segments) with
-# actual confidence, rather than only filtering after the fact.
-_AUDIO_EVENT_MODEL_ID = "MIT/ast-finetuned-audioset-10-10-0.4593"
-_SPEECH_LABEL_KEYWORDS = ("speech", "narration", "monologue", "conversation")
-_MUSIC_LABEL_KEYWORDS = ("music", "sing", "song", "choir", "chant", "rap", "instrument", "yodel")
-
-_audio_event_extractor = None
-_audio_event_model = None
-
-
-def _get_audio_event_classifier():
-    """Lazily loads the AST AudioSet model + feature extractor (~330MB, one-
-    time download to the HF cache) on first use, mirroring how
-    get_vision_service() lazy-loads YOLO/MediaPipe — so a server that never
-    handles a video upload never pays this cost."""
-    global _audio_event_extractor, _audio_event_model
-    if _audio_event_model is None:
-        from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
-        print("🎧 Loading audio event classifier (speech vs. music/singing) on first use...")
-        _audio_event_extractor = AutoFeatureExtractor.from_pretrained(_AUDIO_EVENT_MODEL_ID)
-        _audio_event_model = AutoModelForAudioClassification.from_pretrained(_AUDIO_EVENT_MODEL_ID)
-        _audio_event_model.eval()
-    return _audio_event_extractor, _audio_event_model
-
-
-def _segment_is_speech(samples: "np.ndarray", sample_rate: int) -> bool:
-    """Classifies one mono audio chunk as speech (True) or music/singing
-    (False) using the AST AudioSet classifier. AudioSet is multi-label
-    (sigmoid, not softmax) with many overlapping fine-grained labels (e.g.
-    "Music", "Singing", "Choir", "A capella" can all fire at once on one
-    clip), so this sums predicted probability across every label matching
-    speech-related keywords vs. every label matching music/singing-related
-    keywords and compares the two totals, rather than trusting a single
-    top-1 label."""
-    import torch
-
-    extractor, model = _get_audio_event_classifier()
-    waveform = samples.astype(np.float32) / 32768.0  # int16 PCM -> [-1, 1] float
-    inputs = extractor(waveform, sampling_rate=sample_rate, return_tensors="pt")
-    with torch.no_grad():
-        probs = torch.sigmoid(model(**inputs).logits)[0]
-    id2label = model.config.id2label
-    speech_score = sum(
-        probs[i].item() for i, name in id2label.items()
-        if any(k in name.lower() for k in _SPEECH_LABEL_KEYWORDS)
-    )
-    music_score = sum(
-        probs[i].item() for i, name in id2label.items()
-        if any(k in name.lower() for k in _MUSIC_LABEL_KEYWORDS)
-    )
-    return speech_score >= music_score
-
-
-def _speech_music_segments(wav_path: str, segment_seconds: float = _SPEECH_MUSIC_SEGMENT_SECONDS) -> list[tuple[float, float, bool]]:
-    """Splits the extracted WAV into segment_seconds-long windows and
-    classifies each as speech or music/singing (see _segment_is_speech).
-    Returns a list of (start_seconds, end_seconds, is_speech) tuples
-    covering the whole track — a short trailing sliver under 1 second is
-    dropped rather than judged on too little data.
-
-    Any failure (unexpected WAV format, classifier not loadable, etc.)
-    fails open: the whole track is returned as a single speech segment,
-    i.e. the old whole-file-transcription behavior, rather than silently
-    losing the transcript."""
-    try:
-        with wave.open(wav_path, "rb") as wf:
-            sample_rate = wf.getframerate()
-            sample_width = wf.getsampwidth()
-            n_frames = wf.getnframes()
-            raw = wf.readframes(n_frames)
-        if sample_width != 2:  # _extract_wav always requests 16-bit PCM
-            raise ValueError(f"unexpected sample width {sample_width}")
-        samples = np.frombuffer(raw, dtype=np.int16)
-        if len(samples) == 0:
-            return []
-
-        seg_len = int(segment_seconds * sample_rate)
-        segments = []
-        for start in range(0, len(samples), seg_len):
-            chunk = samples[start:start + seg_len]
-            if len(chunk) < sample_rate:  # under 1s -- not enough to judge
-                continue
-            segments.append((
-                start / sample_rate,
-                (start + len(chunk)) / sample_rate,
-                _segment_is_speech(chunk, sample_rate),
-            ))
-        return segments or [(0.0, len(samples) / sample_rate, True)]
-    except Exception:
-        try:
-            with wave.open(wav_path, "rb") as wf:
-                duration = wf.getnframes() / wf.getframerate()
-        except Exception:
-            return []
-        return [(0.0, duration, True)]
-
-
 def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, str]:
-    """Best-effort: extract + transcribe whatever *spoken* words are in a
-    video's audio track for the upload analysis, using Whisper (see
+    """Best-effort: extract + transcribe whatever words are in a video's
+    audio track for the upload analysis, using Whisper (see
     _whisper_transcribe) instead of recognize_google — same accuracy
-    motivation as /api/speech-to-text. Segments classified as music/singing
-    (see _speech_music_segments) are skipped entirely and never sent to
-    Whisper, so sung lyrics are never turned into text regardless of
-    language — the AST classifier is accurate enough to gate this upfront.
-    If a talking segment and a sung segment both appear in the same clip,
-    only the talking segment's words end up in the result. Unlike
+    motivation as /api/speech-to-text. Transcribes the whole track,
+    spoken or sung — Whisper's own lyrics generally come through fine, so
+    there's no separate speech-vs-music gate here. Unlike
     /api/speech-to-text, a failure here (no audio track, unrecognized
     speech) is not fatal to the upload — it just means no transcript, so
     this always returns a (text, has_nonspeech_audio, detected_language)
     triple ("", False, "" on failure) instead of raising.
     has_nonspeech_audio is only meaningful when text is empty — it tells
-    the caller whether the track had audible content (music, a song,
-    unclear speech, background noise) that just didn't end up as
-    transcribed speech. detected_language is which language Whisper actually
-    detected the speech to be in — since `language` isn't passed as a hard
+    the caller whether the track had audible content (music, unclear
+    speech, background noise) that just didn't end up as transcribed
+    speech. detected_language is which language Whisper actually detected
+    the speech to be in — since `language` isn't passed as a hard
     constraint here (the spoken language in an arbitrary video/link is
     genuinely unknown), this may differ from the `language` the request was
     made with."""
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
-        speech_parts = []
-        detected_language = ""
-        for start, end, is_speech in _speech_music_segments(wav_path):
-            if not is_speech:
-                continue
-            seg_path = _extract_wav_segment(wav_path, start, end)
-            try:
-                text, code = _whisper_transcribe(seg_path, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS)
-            finally:
-                os.remove(seg_path)
-            if text:
-                speech_parts.append(text)
-                detected_language = detected_language or code
-        text = " ".join(speech_parts)
+        text, detected_language = _whisper_transcribe(wav_path, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS)
         has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
         return text, has_nonspeech_audio, detected_language
     except Exception:
