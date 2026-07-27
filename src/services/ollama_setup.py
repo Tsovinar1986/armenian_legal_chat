@@ -44,6 +44,9 @@ def ensure_ollama_models():
 
     if LLM_MODEL not in local_models:
         print(f"⚠️ Ollama model '{LLM_MODEL}' is missing. It's custom to this project "
-              f"(built from this repo's Modelfile + a local GGUF file), not something "
+              f"(built from this repo's Modelfile.v2 + a local GGUF file), not something "
               f"that can be downloaded automatically. From the repo root, run:")
-        print(f"   ollama create {LLM_MODEL} -f Modelfile")
+        print(f"   ollama create {LLM_MODEL} -f Modelfile.v2")
+        print(f"   (Modelfile.v2 points at the retrained armenia-lawyer-router-v2 GGUF — "
+              f"the original Modelfile/armenia-lawyer-router.Q4_K_M.gguf produces garbled "
+              f"output and should not be used.)")

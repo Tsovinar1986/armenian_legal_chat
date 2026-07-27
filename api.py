@@ -1553,6 +1553,21 @@ async def _analyze_video_upload(tmp_path: str, filename: str, language: str, ses
         + "]"
     )
 
+    # Beyond the raw detection facts above, also ask the legal agent for an
+    # actual interpretation/analysis of what was found — same idea as the
+    # document-upload path in upload_file() above — instead of leaving the
+    # caller with only bare actions/emotion/transcript data and no
+    # assessment. See the matching comment in upload_file() for why this was
+    # disabled and is now back: the armenia-lawyer-router model tag was
+    # repointed at the retrained v2 weights, which produce coherent output.
+    agent = await run_in_threadpool(get_legal_agent)
+    analysis = ""
+    try:
+        analysis = await run_in_threadpool(agent.get_advice, video_summary, None, language)
+    except Exception:
+        analysis = ""
+    result["analysis"] = analysis
+
     if session_id:
         # Each video starts a new case — clear this session's prior history
         # first, so a follow-up chat about this video isn't fed a previous,
@@ -1561,6 +1576,10 @@ async def _analyze_video_upload(tmp_path: str, filename: str, language: str, ses
         await run_in_threadpool(
             portal_store.append_chat_message, session_id, "legal", "bot", video_summary
         )
+        if analysis:
+            await run_in_threadpool(
+                portal_store.append_chat_message, session_id, "legal", "bot", analysis
+            )
 
     return {"success": True, "kind": "video", **result}
 
@@ -1603,17 +1622,33 @@ async def upload_file(
             ingestor = IngestionService(agent.repo.db)
             status = await run_in_threadpool(ingestor.process_file, tmp_path)
 
-            # NOTE: this used to also run the extracted text through
-            # agent.get_advice() for an actual analysis (matching the CLI's
-            # handle_upload). Disabled for now — the armenia-lawyer-router
-            # Ollama model is currently producing garbled/corrupted output on
-            # every prompt regardless of language or template (looks like a
-            # broken tokenizer/detokenizer in the GGUF conversion, unrelated
-            # to this upload feature), so surfacing its output here would
-            # just show users garbage text. Re-enable get_advice(doc_text,
-            # None, language) once that's fixed.
+            # Beyond indexing the document into the vector store, also run its
+            # extracted text through the legal agent for an actual summary/
+            # analysis of its content — matching what the CLI's handle_upload
+            # already does (src/main.py) — instead of only reporting "indexed
+            # successfully" with no insight into what it says. This was
+            # disabled for a while because the armenia-lawyer-router Ollama
+            # model was producing garbled/corrupted output on every prompt
+            # (broken GGUF conversion); re-enabled now that the model tag was
+            # repointed at the retrained v2 weights, which produce coherent
+            # Armenian legal text (verified manually — still occasionally
+            # imperfect, so watch for regressions).
+            analysis = ""
+            try:
+                doc_text = await run_in_threadpool(ingestor.extract_text, tmp_path)
+                if doc_text.strip():
+                    analysis = await run_in_threadpool(agent.get_advice, doc_text, None, language)
+            except Exception:
+                analysis = ""
 
-            return {"success": True, "kind": "document", "message": status}
+            if session_id and analysis:
+                await run_in_threadpool(portal_store.clear_chat_messages, session_id, "legal")
+                await run_in_threadpool(
+                    portal_store.append_chat_message, session_id, "legal", "bot",
+                    f"[Uploaded document '{file.filename}']\n{analysis}",
+                )
+
+            return {"success": True, "kind": "document", "message": status, "analysis": analysis}
 
         return await _analyze_video_upload(tmp_path, file.filename, language, session_id)
     except Exception as exc:
