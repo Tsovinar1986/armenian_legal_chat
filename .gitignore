@@ -19,3 +19,9 @@ finetune_env/
 adapters/
 logs/
 data/mlx_finetune/
+
+# Local Armenian VITS TTS training (notebook/prepare_tts_dataset.py,
+# notebook/train_armenian_vits.py) -- multi-GB audio corpus + model
+# checkpoints, doesn't belong in git.
+tts_env/
+tts_data/
