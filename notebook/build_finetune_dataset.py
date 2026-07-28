@@ -130,7 +130,10 @@ def build_example(row: dict) -> dict:
         f"համար խորհուրդ ենք տալիս խորհրդակցել որակավորված փաստաբանի հետ:"
     )
 
-    return {"query": query, "answer": answer, "source_case": case_number, "source_judge": judge}
+    return {
+        "query": query, "answer": answer, "source_case": case_number, "source_judge": judge,
+        "category": category, "excerpt": excerpt,
+    }
 
 
 def main():
@@ -139,8 +142,17 @@ def main():
 
     examples = [build_example(r) for r in rows if (r.get("Verdict_Text") or "").strip()]
 
+    # category/excerpt (beyond query/answer/source_case/source_judge) are new
+    # columns: notebook/prepare_mlx_dataset.py needs them to build a training
+    # prompt that actually includes retrieved-case context, matching what
+    # legal_agent.py's _direct_llm_answer() gives the model in production —
+    # see that script's docstring for why the old context-free prompt made
+    # every completion here unlearnable trivia (recall one specific case's
+    # excerpt from a bare category label, with no signal for which one).
     with open(OUT_PATH, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=["query", "answer", "source_case", "source_judge"])
+        writer = csv.DictWriter(
+            f, fieldnames=["query", "answer", "source_case", "source_judge", "category", "excerpt"]
+        )
         writer.writeheader()
         writer.writerows(examples)
 
