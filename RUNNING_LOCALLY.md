@@ -5,19 +5,53 @@ bookings, payments, video-call signaling — running locally. For the full
 setup (payments, bookings, deployment, API contract, etc.) see
 [README.md](README.md) and [START_HERE.md](START_HERE.md).
 
-**Shortcut, once step 2 (Python deps) below is done:** `./start.sh` (macOS/
-Linux) or `.\start.ps1` (Windows, PowerShell) does everything else in steps
-3-4 for you every time — starts Ollama if it isn't running, builds the
-frontend if `frontend/dist` is missing, frees port 8000 if a previous run is
-still holding it, then starts the backend. Safe to re-run any time (e.g.
-after "backend unreachable" in the browser — just run it again). Pass
-`--rebuild-frontend` (`-RebuildFrontend` on Windows) to force a fresh
-frontend build. Skip to step 5 once it prints
-`Uvicorn running on http://0.0.0.0:8000`.
+**Shortcut — skip straight to step 5:**
 
-On Windows, if `.\start.ps1` refuses to run ("running scripts is disabled on
-this system"), run this once as Administrator, then try again:
-`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+- **macOS/Linux:** `./start.sh`, or `make` (same as `make all`).
+- **Windows:** **double-click `start.bat`** — this is the reliable way to
+  hand this to a teammate who isn't comfortable in a terminal. Don't
+  double-click `start.ps1` directly: Windows Explorer doesn't run `.ps1`
+  files on double-click (it just opens the file in a text editor, does
+  nothing, and then `http://localhost:8000` predictably shows "backend
+  unreachable" because nothing ever started). If you're already in a
+  PowerShell prompt, `.\start.ps1` works too.
+
+Any of these do everything in steps 2-4 for you every time — creates
+`.venv` and installs Python deps if missing, starts Ollama if it isn't
+running, builds the frontend if `frontend/dist` is missing, frees port 8000
+if a previous run is still holding it, then starts the backend. Safe to
+re-run any time (e.g. after "backend unreachable" in the browser — just run
+it again). Pass `--rebuild-frontend` (`-RebuildFrontend` on `start.ps1`, or
+`make rebuild`) to force a fresh frontend build, or `--sync-only`
+(`-SyncOnly` / `make sync`) to just install/refresh dependencies without
+starting anything (handy right after `git pull`). You'll see it print
+`Uvicorn running on http://0.0.0.0:8000` once it's up — that line is what
+actually matters, not which of these you used to get there.
+
+Only follow steps 2-4 by hand if you want more control (a specific Python
+version, editing frontend code with hot reload, etc.) — otherwise the
+scripts above do it all.
+
+**"Backend unreachable" checklist (Windows, especially on a machine that
+isn't your own):**
+1. Did you double-click `start.bat` (not `start.ps1`)? That's the one
+   difference that most often explains "I ran it and nothing happened."
+2. Is a window still open showing `Uvicorn running on http://0.0.0.0:8000`?
+   If that window was closed (or never got that far), the server isn't
+   running — `start.bat` now keeps the window open with `pause` specifically
+   so any error is readable instead of flashing shut.
+3. If it stopped on a Python dependency error, read the message — it's
+   almost always PyAudio needing a prebuilt wheel, or an old Python version.
+   See the PortAudio/ffmpeg notes below.
+4. Firewall/antivirus prompts for "Python" or "uvicorn" the first time —
+   click **Allow**. This only matters for reaching the server from another
+   device on the network; the machine's own browser hitting
+   `http://localhost:8000` works regardless.
+
+If `.\start.ps1` refuses to run at all from PowerShell ("running scripts is
+disabled on this system"), run this once as Administrator, then try again:
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. `start.bat` avoids
+needing this — it bypasses the policy for just that one run.
 
 ## 1. Get the code
 
@@ -52,7 +86,8 @@ pip install -r requirements.txt
 
 You'll also need:
 - **[Ollama](https://ollama.com/)** running, with the `nomic-embed-text` and `armenia-lawyer-router` models pulled — ask whoever set up your machine if these aren't already there.
-- **ffmpeg on your PATH** — only needed for speech-to-text. macOS: `brew install ffmpeg`. Windows: download a build from [gyan.dev's ffmpeg builds](https://www.gyan.dev/ffmpeg/builds/), extract it somewhere permanent, and add its `bin` folder to your `PATH`.
+- **ffmpeg on your PATH** — only needed for speech-to-text. macOS: `brew install ffmpeg`. Linux: `sudo apt install ffmpeg` (Debian/Ubuntu) or your distro's package manager. Windows: download a build from [gyan.dev's ffmpeg builds](https://www.gyan.dev/ffmpeg/builds/), extract it somewhere permanent, and add its `bin` folder to your `PATH`.
+- **PortAudio**, only needed for `pip install PyAudio` to succeed (voice I/O). macOS: `brew install portaudio`. Linux: `sudo apt install portaudio19-dev` (Debian/Ubuntu) or your distro's equivalent. Windows: `pip install PyAudio` normally just works from a prebuilt wheel; if it doesn't, grab a matching wheel from [Christoph Gohlke's unofficial builds](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio).
 
 ## 3. Build the frontend (one-time, only when its code changes)
 
@@ -128,7 +163,8 @@ integrating against the endpoints directly instead.
 
 ## If something's not working
 
-- **Port already in use** (`Address already in use` / `EADDRINUSE`) — something else is already running on 8000. See "Port already in use" in [README.md](README.md) for how to find and stop it (macOS/Linux: `lsof`/`kill`; Windows: `netstat`/`taskkill`).
+- **"backend unreachable" in the browser (chat console's status pill / any chat message)** — this means the page's `fetch("/health")` couldn't reach a server at all, i.e. `uvicorn` isn't actually running (it's unrelated to Ollama or model setup — `/health` doesn't touch either). On Windows, first check you launched it via `start.bat` (double-click) or `.\start.ps1` from an actual PowerShell prompt, not by double-clicking `start.ps1` itself — see the checklist above. On any OS, re-run `./start.sh` / `start.bat` / `.\start.ps1` and read its output for the actual error.
+- **Port already in use** (`Address already in use` / `EADDRINUSE`) — something else is already running on 8000. See "Port already in use" in [README.md](README.md) for how to find and stop it (macOS/Linux: `lsof`/`kill`, or `make stop`; Windows: `netstat`/`taskkill`, or `.\start.ps1` handles this automatically).
 - **`/` returns a raw JSON 404 instead of the chat console** — `frontend/dist/` doesn't exist yet; go back to step 3 and run `npm run build`. The backend still runs fine without it (all `/api/*` endpoints work), it just has nothing to serve at `/`.
 - **Speech-to-text fails** — almost always missing `ffmpeg` on the backend's PATH, or the client denied microphone permission.
 - **Upload says "Unsupported file type"** — only `.txt`/`.xlsx` (documents) and `.mp4`/`.mov`/`.avi`/`.mkv` (video) are handled right now.

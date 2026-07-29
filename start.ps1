@@ -1,18 +1,28 @@
 # One-command way to bring up the whole app (backend + merged frontend) on
 # Windows -- the PowerShell equivalent of start.sh (macOS/Linux). Handles
-# the same three things that actually cause "backend unreachable" in
-# practice: Ollama not running yet, frontend/dist missing, and a stale
-# server still (or again) holding port 8000.
+# the things that actually cause "backend unreachable" in practice: no
+# virtualenv / missing Python deps, Ollama not running yet, frontend/dist
+# missing, and a stale server still (or again) holding port 8000.
+#
+# Don't double-click THIS file in Explorer -- Windows opens .ps1 files in a
+# text editor on double-click instead of running them, which silently does
+# nothing and then looks exactly like "backend unreachable" once you try
+# http://localhost:8000. Double-click start.bat instead (same directory),
+# or run this file from an actual PowerShell prompt as shown below.
 #
 # Usage (from the repo root, in PowerShell):
 #   .\start.ps1
 #   .\start.ps1 -RebuildFrontend
+#   .\start.ps1 -SyncOnly     # install/refresh Python + npm deps, then exit
+#                              # (doesn't start Ollama/build/run -- useful
+#                              # after `git pull`)
 #
 # If PowerShell blocks running local scripts, run this once as
 # Administrator: Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 param(
-    [switch]$RebuildFrontend
+    [switch]$RebuildFrontend,
+    [switch]$SyncOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -25,6 +35,59 @@ function Test-Ollama {
     } catch {
         return $false
     }
+}
+
+# --- 0. Python virtual environment + dependencies ------------------------
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if (-not $pythonCmd) { $pythonCmd = Get-Command py -ErrorAction SilentlyContinue }
+if (-not $pythonCmd) {
+    Write-Host "No 'python' or 'py' found on PATH. Install Python 3.10+ from https://www.python.org/downloads/ (check 'Add python.exe to PATH' during install) and try again." -ForegroundColor Red
+    exit 1
+}
+$pythonExe = $pythonCmd.Source
+
+if (-not (Test-Path ".venv")) {
+    Write-Host "Creating virtual environment (.venv)..."
+    & $pythonExe -m venv .venv
+}
+
+$venvPip = ".venv\Scripts\pip.exe"
+$venvUvicorn = ".venv\Scripts\uvicorn.exe"
+$depsMarker = ".venv\.deps-installed"
+
+$needsInstall = $SyncOnly -or (-not (Test-Path $depsMarker)) -or
+    ((Get-Item "requirements.txt").LastWriteTime -gt (Get-Item $depsMarker).LastWriteTime)
+if ($needsInstall) {
+    Write-Host "Installing Python dependencies (this can take a few minutes the first time)..."
+    & $venvPip install --upgrade pip --quiet
+    & $venvPip install -r requirements.txt
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Some Python dependencies failed to install. A common cause on Windows is PyAudio, which needs a prebuilt wheel -- see RUNNING_LOCALLY.md / README.md for the workaround. Fix that, then re-run .\start.ps1." -ForegroundColor Red
+        exit 1
+    }
+    # Required separately (--no-deps) for the two-agent crew responses -- see
+    # START_HERE.md. Non-fatal: the app still runs without it, just with a
+    # simpler non-crew chat response.
+    & $venvPip install --no-deps crewai==1.15.2 --quiet
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "crewai install failed -- chat still works, just without the two-agent crew (falls back automatically)." -ForegroundColor Yellow
+    }
+    New-Item -ItemType File -Path $depsMarker -Force | Out-Null
+}
+Write-Host "Python dependencies installed (.venv)" -ForegroundColor Green
+
+if ($SyncOnly) {
+    if (Get-Command npm -ErrorAction SilentlyContinue) {
+        Write-Host "Syncing frontend dependencies..."
+        Push-Location frontend
+        npm install --silent
+        Pop-Location
+        Write-Host "Frontend dependencies installed (frontend\node_modules)" -ForegroundColor Green
+    } else {
+        Write-Host "npm not found on PATH -- skipped frontend dependency sync. Install Node.js (https://nodejs.org/) if you need it." -ForegroundColor Yellow
+    }
+    Write-Host "Sync complete." -ForegroundColor Green
+    exit 0
 }
 
 # --- 1. Ollama --------------------------------------------------------
@@ -50,6 +113,10 @@ if (Test-Ollama) {
 
 # --- 2. Frontend --------------------------------------------------------
 if ((-not (Test-Path "frontend\dist")) -or $RebuildFrontend) {
+    if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
+        Write-Host "npm not found on PATH. Install Node.js (https://nodejs.org/) and re-run .\start.ps1." -ForegroundColor Red
+        exit 1
+    }
     Write-Host "Building frontend..."
     Push-Location frontend
     npm install --silent
@@ -70,4 +137,4 @@ if ($existing) {
 }
 
 Write-Host "Starting backend on http://localhost:8000 ..." -ForegroundColor Green
-uvicorn api:app --host 0.0.0.0 --port 8000
+& $venvUvicorn api:app --host 0.0.0.0 --port 8000

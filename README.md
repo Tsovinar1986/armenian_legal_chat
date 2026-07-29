@@ -82,7 +82,9 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (for example on macOS: `brew install portaudio`) and retry.
+All packages referenced in the README and the app are listed in `requirements.txt`. If `pip install PyAudio` fails, install PortAudio first (macOS: `brew install portaudio`; Debian/Ubuntu: `sudo apt install portaudio19-dev`; Windows: a prebuilt wheel is normally used automatically — see RUNNING_LOCALLY.md if it isn't) and retry.
+
+**Shortcut:** `./start.sh` (macOS/Linux, or `make`) / double-click `start.bat` (Windows — don't double-click `start.ps1` itself, Explorer won't run it) does the venv creation, dependency install, Ollama startup, frontend build, and server start for you in one command — see [RUNNING_LOCALLY.md](RUNNING_LOCALLY.md).
 
 **Second, separate command required for multi-agent chat responses:**
 
