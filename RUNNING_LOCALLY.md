@@ -5,6 +5,14 @@ bookings, payments, video-call signaling — running locally. For the full
 setup (payments, bookings, deployment, API contract, etc.) see
 [README.md](README.md) and [START_HERE.md](START_HERE.md).
 
+**macOS shortcut:** once you've done step 2 (Python deps) below, `./start.sh`
+does everything else in steps 3-4 for you every time — starts Ollama if it
+isn't running, builds the frontend if `frontend/dist` is missing, frees port
+8000 if a previous run is still holding it, then starts the backend. Safe to
+re-run any time (e.g. after "backend unreachable" in the browser — just run
+it again). Pass `--rebuild-frontend` to force a fresh frontend build. Skip to
+step 5 once it prints `Uvicorn running on http://0.0.0.0:8000`.
+
 ## 1. Get the code
 
 ```bash
