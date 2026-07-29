@@ -20,7 +20,53 @@
     </p>
   </header>
 
-  <div class="console">
+  <div class="auth-card" id="authCard">
+    <div class="auth-card-signedout" id="authSignedOut">
+      <div class="auth-role-toggle" id="authRoleToggle" role="group" aria-label="Account type">
+        <button class="auth-role-btn active" data-role="individual" type="button">🙋 Individual</button>
+        <button class="auth-role-btn" data-role="lawyer" type="button">⚖️ Lawyer</button>
+      </div>
+
+      <div class="auth-tabs" id="authTabs" role="tablist">
+        <button class="auth-tab active" data-tab="signin" type="button">Sign In</button>
+        <button class="auth-tab" data-tab="register" type="button">Sign Up</button>
+        <button class="auth-tab" data-tab="guest" type="button">Guest</button>
+      </div>
+
+      <form class="auth-form" id="signinForm">
+        <input id="signinIdentifier" type="text" placeholder="Email or phone" autocomplete="username" required />
+        <input id="signinPassword" type="password" placeholder="Password" autocomplete="current-password" required />
+        <button class="auth-submit" type="submit">Sign in as <span class="authRoleLabel">Individual</span></button>
+      </form>
+
+      <form class="auth-form" id="registerForm" hidden>
+        <input id="registerName" type="text" placeholder="Full name" autocomplete="name" required />
+        <input id="registerEmail" type="email" placeholder="Email address" autocomplete="email" required />
+        <input id="registerPhone" type="tel" placeholder="Phone number (optional)" autocomplete="tel" />
+        <input id="registerPassword" type="password" placeholder="Password" autocomplete="new-password" required />
+        <input id="registerLicense" type="text" placeholder="Bar license number" hidden />
+        <button class="auth-submit" type="submit">Sign up as <span class="authRoleLabel">Individual</span></button>
+      </form>
+
+      <div class="auth-guest-panel" id="guestPanel" hidden>
+        <p>Skip sign-in and ask the Legal AI a quick question — you won't have a saved account or history.</p>
+        <button class="auth-submit" id="authGuestBtn" type="button">Continue as guest</button>
+      </div>
+
+      <div class="auth-message" id="authMessage"></div>
+    </div>
+
+    <div class="auth-card-signedin" id="authSignedIn" hidden>
+      <span class="auth-user-pill">
+        <span id="authUserRoleIcon">🙋</span>
+        <span id="authUserName">—</span>
+        <span class="auth-user-role" id="authUserRole">individual</span>
+      </span>
+      <button class="auth-signout" id="authSignOutBtn" type="button">Sign out</button>
+    </div>
+  </div>
+
+  <div class="console" hidden>
     <div class="console-bar">
       <div class="console-bar-left">
         <span class="console-dot" id="liveDot"></span>
@@ -74,7 +120,8 @@
     Start the backend with <code>uvicorn api:app --reload --port 8000</code> from the repo root,
     then run <code>npm run dev</code> here. Chat depends on Ollama/chromadb; the mic and video
     transcript need <code>ffmpeg</code> on the backend's PATH and browser microphone permission;
-    video analysis loads YOLO/MediaPipe on first use, so the first upload is slower than the rest.
+    video/voice analysis (YOLO/MediaPipe/Whisper) loads at backend startup, so it can take a
+    minute or two after launch before the backend reports itself online.
   </p>
 
 </div>

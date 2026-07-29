@@ -48,6 +48,242 @@ let mediaRecorder = null;
 let recordingTimer = null;
 let currentLanguage = "hy";
 
+// ---------- Auth: sign in / sign up (individual or lawyer) -> /api/auth/* ----------
+
+const authCard = document.getElementById("authCard");
+const authSignedOut = document.getElementById("authSignedOut");
+const authSignedIn = document.getElementById("authSignedIn");
+const authRoleToggle = document.getElementById("authRoleToggle");
+const authRoleButtons = authRoleToggle.querySelectorAll(".auth-role-btn");
+const authRoleLabels = authCard.querySelectorAll(".authRoleLabel");
+const authTabButtons = authCard.querySelectorAll(".auth-tab");
+const signinForm = document.getElementById("signinForm");
+const registerForm = document.getElementById("registerForm");
+const registerLicense = document.getElementById("registerLicense");
+const guestPanel = document.getElementById("guestPanel");
+const authGuestBtn = document.getElementById("authGuestBtn");
+const authMessage = document.getElementById("authMessage");
+const authUserName = document.getElementById("authUserName");
+const authUserRole = document.getElementById("authUserRole");
+const authUserRoleIcon = document.getElementById("authUserRoleIcon");
+const authSignOutBtn = document.getElementById("authSignOutBtn");
+const consoleEl = document.querySelector(".console");
+
+const ROLE_LABELS = { individual: "Individual", lawyer: "Lawyer" };
+const ROLE_ICONS = { individual: "🙋", lawyer: "⚖️" };
+
+let authRole = "individual";
+let authTab = "signin";
+let authUser = null;
+let authToken = null;
+
+function setAuthMessage(text, kind) {
+  authMessage.textContent = text || "";
+  authMessage.classList.toggle("error", kind === "error");
+  authMessage.classList.toggle("success", kind === "success");
+}
+
+function setAuthRole(role) {
+  authRole = role;
+  authRoleButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.role === role));
+  authRoleLabels.forEach((el) => (el.textContent = ROLE_LABELS[role]));
+  registerLicense.hidden = role !== "lawyer";
+  registerLicense.required = role === "lawyer";
+}
+
+function setAuthTab(tab) {
+  authTab = tab;
+  authTabButtons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tab));
+  signinForm.hidden = tab !== "signin";
+  registerForm.hidden = tab !== "register";
+  guestPanel.hidden = tab !== "guest";
+  setAuthMessage("");
+}
+
+function revealConsole() {
+  consoleEl.hidden = false;
+}
+
+authRoleButtons.forEach((btn) => btn.addEventListener("click", () => setAuthRole(btn.dataset.role)));
+authTabButtons.forEach((btn) => btn.addEventListener("click", () => setAuthTab(btn.dataset.tab)));
+
+function showSignedIn(user) {
+  authUser = user;
+  authSignedOut.hidden = true;
+  authSignedIn.hidden = false;
+  authUserName.textContent = user.name || user.email || "Signed in";
+  authUserRole.textContent = user.role;
+  authUserRoleIcon.textContent = ROLE_ICONS[user.role] || "👤";
+  revealConsole();
+}
+
+function showSignedOut() {
+  authUser = null;
+  authToken = null;
+  localStorage.removeItem("legalAuthToken");
+  localStorage.removeItem("legalAuthUser");
+  authSignedOut.hidden = false;
+  authSignedIn.hidden = true;
+}
+
+async function restoreSession() {
+  const token = localStorage.getItem("legalAuthToken");
+  const storedUser = localStorage.getItem("legalAuthUser");
+  if (!token || !storedUser) {
+    if (sessionStorage.getItem("legalAuthGuest") === "1") {
+      authCard.hidden = true;
+      revealConsole();
+    }
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/auth/me", { headers: { Authorization: `Bearer ${token}` } });
+    const data = await res.json();
+    if (data.success) {
+      authToken = token;
+      showSignedIn(JSON.parse(storedUser));
+    } else {
+      showSignedOut();
+    }
+  } catch {
+    // Backend unreachable at load time — keep the cached user so the UI
+    // doesn't flash back to signed-out; checkBackend()'s poll will surface
+    // the outage separately via the header pill.
+    authToken = token;
+    showSignedIn(JSON.parse(storedUser));
+  }
+}
+
+function persistSession(token, user) {
+  authToken = token;
+  localStorage.setItem("legalAuthToken", token);
+  localStorage.setItem("legalAuthUser", JSON.stringify(user));
+  showSignedIn(user);
+}
+
+signinForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const identifier = document.getElementById("signinIdentifier").value.trim();
+  const password = document.getElementById("signinPassword").value;
+  setAuthMessage("Signing in…");
+
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, password, role: authRole }),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      setAuthMessage(data.message || "Sign in failed.", "error");
+      return;
+    }
+    persistSession(data.token, data.user);
+    setAuthMessage("");
+    signinForm.reset();
+  } catch (err) {
+    setAuthMessage(`Couldn't reach the backend (${err.message}).`, "error");
+  }
+});
+
+registerForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const payload = {
+    name: document.getElementById("registerName").value.trim(),
+    email: document.getElementById("registerEmail").value.trim(),
+    phone_number: document.getElementById("registerPhone").value.trim(),
+    password: document.getElementById("registerPassword").value,
+    role: authRole,
+    license_number: authRole === "lawyer" ? registerLicense.value.trim() : null,
+  };
+  setAuthMessage("Creating your account…");
+
+  try {
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.success) {
+      setAuthMessage(data.message || "Sign up failed.", "error");
+      return;
+    }
+    persistSession(data.token, data.user);
+    setAuthMessage("");
+    registerForm.reset();
+  } catch (err) {
+    setAuthMessage(`Couldn't reach the backend (${err.message}).`, "error");
+  }
+});
+
+authGuestBtn.addEventListener("click", () => {
+  authCard.hidden = true;
+  sessionStorage.setItem("legalAuthGuest", "1");
+  revealConsole();
+});
+
+authSignOutBtn.addEventListener("click", async () => {
+  if (authToken) {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: authToken }),
+      });
+    } catch {
+      // Best-effort — still clear the local session below even if this fails.
+    }
+  }
+  showSignedOut();
+});
+
+setAuthRole(authRole);
+setAuthTab(authTab);
+restoreSession();
+
+// ---------- Text-to-speech: read AI replies aloud via the browser's free,
+// built-in Web Speech API (window.speechSynthesis) -- no backend call, no
+// API key, no per-request cost. Auto-speaks only when the question came in
+// by voice (see sendMessage's viaVoice option) — a typed question gets a
+// typed-feeling reply, a spoken question gets a spoken-back one; every bot
+// reply also keeps its own 🔊 replay button (see addRow) for manual re-play
+// regardless of how the question was asked. Voice quality/availability
+// (including whether an Armenian voice exists at all) depends entirely on
+// the user's OS/browser; there's no server-side fallback. ----------
+
+const TTS_SUPPORTED = "speechSynthesis" in window;
+const TTS_LANG_PREFIX = { hy: "hy", en: "en", ru: "ru" };
+let ttsVoices = [];
+
+function refreshVoices() {
+  ttsVoices = window.speechSynthesis.getVoices();
+}
+if (TTS_SUPPORTED) {
+  refreshVoices();
+  window.speechSynthesis.addEventListener("voiceschanged", refreshVoices);
+}
+
+function pickVoice(lang) {
+  const prefix = TTS_LANG_PREFIX[lang] || lang;
+  return (
+    ttsVoices.find((v) => v.lang.toLowerCase().startsWith(prefix)) ||
+    ttsVoices.find((v) => v.lang.toLowerCase().startsWith("en")) ||
+    ttsVoices[0]
+  );
+}
+
+function speakText(text, lang) {
+  if (!TTS_SUPPORTED || !text) return;
+  window.speechSynthesis.cancel(); // one reply at a time, no overlapping queue
+  const utterance = new SpeechSynthesisUtterance(text);
+  const voice = pickVoice(lang);
+  if (voice) utterance.voice = voice;
+  utterance.lang = voice ? voice.lang : (TTS_LANG_PREFIX[lang] || "en");
+  window.speechSynthesis.speak(utterance);
+}
+
 function scrollToEnd() {
   transcript.scrollTop = transcript.scrollHeight;
 }
@@ -56,11 +292,28 @@ function addRow(kind, who, content, opts = {}) {
   const row = document.createElement("div");
   row.className = `row ${kind}`;
 
+  // Plain-text bot replies (not the typing indicator or HTML-rendered video
+  // analysis) get a replay button so any past reply can be re-heard on
+  // demand, independent of the "read replies aloud" auto-speak toggle.
+  const speakable = kind === "bot" && who && !opts.html;
+
   if (who) {
+    const whoRow = document.createElement("div");
+    whoRow.className = "who-row";
     const whoEl = document.createElement("span");
     whoEl.className = "who";
     whoEl.textContent = who;
-    row.appendChild(whoEl);
+    whoRow.appendChild(whoEl);
+    if (speakable) {
+      const speakBtn = document.createElement("button");
+      speakBtn.type = "button";
+      speakBtn.className = "speak-btn";
+      speakBtn.title = "Read this reply aloud";
+      speakBtn.textContent = "🔊";
+      speakBtn.addEventListener("click", () => speakText(content, currentLanguage));
+      whoRow.appendChild(speakBtn);
+    }
+    row.appendChild(whoRow);
   }
 
   const bubble = document.createElement("div");
@@ -128,7 +381,7 @@ langButtons.forEach((btn) => {
 
 // ---------- Chat: typed or transcribed text -> /api/chat ----------
 
-async function sendMessage(message) {
+async function sendMessage(message, { viaVoice = false } = {}) {
   addRow("user", "You", message);
   setComposerEnabled(false);
   const typing = addTyping();
@@ -149,7 +402,9 @@ async function sendMessage(message) {
     if (data.success === false) {
       addRow("system", null, data.message || "The backend rejected that message.", { warn: true });
     } else {
-      addRow("bot", "AI", data.response || "(empty response)");
+      const replyText = data.response || "(empty response)";
+      addRow("bot", "AI", replyText);
+      if (viaVoice) speakText(replyText, currentLanguage);
     }
     setBackendStatus(true);
   } catch (err) {
@@ -252,7 +507,7 @@ async function transcribeAndSend(blob) {
     }
 
     setComposerEnabled(true);
-    sendMessage(data.text);
+    sendMessage(data.text, { viaVoice: true });
   } catch (err) {
     working.row.remove();
     addRow("system", null, `⚠️ Speech-to-text request failed: ${err.message}`, { warn: true });
@@ -270,6 +525,31 @@ btnMic.addEventListener("click", () => {
 });
 
 // ---------- Upload: doc -> case DB, video (file or link) -> action/emotion + speech transcript ----------
+
+// Vision/Whisper models now warm up at backend startup (see api.py's
+// warm_up_legal_agent), not on the first request, but a slow yt-dlp
+// download or a genuinely stuck/dropped backend connection can still hang
+// the fetch indefinitely with no timeout — the browser's own network stack
+// eventually gives up and throws its own opaque error (e.g. Safari's bare
+// "Load failed", with no indication of what happened or how long it waited).
+// Aborting ourselves first means the UI always shows a clear, actionable
+// message instead.
+const VIDEO_FETCH_TIMEOUT_MS = 4 * 60 * 1000;
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = VIDEO_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(`No response after ${Math.round(timeoutMs / 1000)}s — the backend may be stuck, or this video is taking unusually long.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Shared by the file-upload flow and the video-link flow below — both POST
 // to a backend endpoint that returns the same {kind: "video", ...} shape
@@ -331,7 +611,7 @@ fileInput.addEventListener("change", async () => {
   const working = addRow(
     "system", null,
     isVideo
-      ? `🎥 Analyzing ${f.name}… (action/emotion detection + speech transcript, can take a while on first upload)`
+      ? `🎥 Analyzing ${f.name}… (action/emotion detection + speech transcript)`
       : `📄 Processing ${f.name}…`
   );
 
@@ -341,7 +621,7 @@ fileInput.addEventListener("change", async () => {
     form.append("language", currentLanguage);
     if (sessionId) form.append("session_id", sessionId);
 
-    const res = await fetch("/api/upload", { method: "POST", body: form });
+    const res = await fetchWithTimeout("/api/upload", { method: "POST", body: form });
     const data = await res.json();
     working.row.remove();
 
@@ -385,7 +665,7 @@ async function submitVideoLink() {
     form.append("language", currentLanguage);
     if (sessionId) form.append("session_id", sessionId);
 
-    const res = await fetch("/api/upload-link", { method: "POST", body: form });
+    const res = await fetchWithTimeout("/api/upload-link", { method: "POST", body: form });
     const data = await res.json();
     working.row.remove();
 

@@ -169,6 +169,36 @@ async def warm_up_legal_agent():
         print(f"⚠️ Legal AI chat backend failed to initialize: {exc}")
         print("   The portal will still run, but /api/chat will return an error until this is fixed.")
 
+    # Vision (YOLO + MediaPipe) and Whisper both used to lazy-load on
+    # whichever request first needed a video/audio analysis — fine for
+    # Whisper's "tiny"/"base" sizes, but "medium" (the default, see
+    # _WHISPER_MODEL_SIZE) re-verifies its full checkpoint's SHA256 on every
+    # cold load, which alone can run past a minute even with the weights
+    # already cached on disk. Stacked with YOLO/MediaPipe's own cold-load,
+    # that easily pushed a first /api/upload or /api/upload-link request
+    # past the browser's own patience for a hanging fetch (surfaced as
+    # Safari's opaque "Load failed", with no indication anything was even
+    # in progress). Warming both here instead moves that one-time cost to
+    # server boot, where a slow startup is expected, instead of ambushing
+    # the first real user request.
+    try:
+        # get_vision_service() alone only builds the LegalVisionService
+        # shell -- the actual YOLO/MediaPipe load is behind its `.classifier`
+        # property, touched lazily on first real frame. Access it here too,
+        # or this warm-up is a no-op and the cold-load still lands on the
+        # first real /api/upload(-link) request.
+        vision_service = await run_in_threadpool(get_vision_service)
+        await run_in_threadpool(lambda: vision_service.classifier)
+        print("✅ Vision models (YOLO + MediaPipe) ready")
+    except Exception as exc:
+        print(f"⚠️ Vision models failed to initialize: {exc}")
+
+    try:
+        await run_in_threadpool(_get_whisper_model)
+        print("✅ Whisper speech-to-text model ready")
+    except Exception as exc:
+        print(f"⚠️ Whisper model failed to initialize: {exc}")
+
 
 class RegisterRequest(BaseModel):
     name: str
@@ -1695,7 +1725,15 @@ def _download_video_from_url(url: str) -> str:
     Returns the local path to the downloaded video file."""
     import yt_dlp
 
-    probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+    # socket_timeout/retries bound how long a stalled or rate-limited host
+    # (Instagram in particular routinely stalls or resets connections for
+    # unauthenticated requests) can hang this call — without them a bad
+    # network condition here blocks the request indefinitely, which is what
+    # eventually surfaces to the browser as an opaque "Load failed" instead
+    # of the clear JSON error message the except block below would return.
+    NETWORK_OPTS = {"socket_timeout": 20, "retries": 3, "fragment_retries": 3}
+
+    probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True, **NETWORK_OPTS}
     with yt_dlp.YoutubeDL(probe_opts) as ydl:
         info = ydl.extract_info(url, download=False)
     duration = info.get("duration") or 0
@@ -1720,6 +1758,7 @@ def _download_video_from_url(url: str) -> str:
             "outtmpl": os.path.join(tmp_dir, f"attempt{i}_%(id)s.%(ext)s"),
             "format": fmt,
             "merge_output_format": "mp4",
+            **NETWORK_OPTS,
         }
         try:
             with yt_dlp.YoutubeDL(download_opts) as ydl:
