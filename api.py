@@ -24,6 +24,7 @@ from zoneinfo import ZoneInfo
 import stripe
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -223,8 +224,13 @@ class PaymentIntentRequest(BaseModel):
     timezone: str = "UTC"
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index():
+@app.get("/legacy-demo", response_class=HTMLResponse)
+async def legacy_demo():
+    """Original hand-rolled registration/dashboard/booking/video-call demo
+    page. Moved off "/" to make room for the real frontend/ (Vite) chat
+    console mounted at the end of this file — this stays reachable at its
+    own path since it still demonstrates the raw registration/booking/
+    payment/video-call endpoints directly, unlike the chat console."""
     return """
     <!doctype html>
     <html lang="en">
@@ -1964,3 +1970,23 @@ async def signaling_socket(websocket: WebSocket, room_id: str):
         room_clients[room_id].discard(websocket)
         if not room_clients[room_id]:
             room_clients.pop(room_id, None)
+
+
+# Serves the built frontend/ (Vite) chat console -- must be the LAST route
+# registered in this file: Starlette matches routes in registration order,
+# so every /api/*, /health, /legacy-demo, /pay, /therapist, /mood-tracking,
+# /ws/* route above is matched first; this mount only catches whatever none
+# of those already claimed (i.e. "/" and the built JS/CSS asset paths).
+# html=True makes it serve frontend/dist/index.html for "/" (and for any
+# other unmatched path, since this is a single-page app with no client-side
+# routes of its own beyond "/").
+#
+# Requires `cd frontend && npm run build` to have been run at least once
+# (writes frontend/dist/, gitignored like frontend/node_modules/) --
+# missing entirely during local frontend development is fine, since `npm
+# run dev`'s Vite dev server (port 5173) proxies /api and /health to this
+# backend instead of needing this mount at all. This mount is what makes a
+# single `uvicorn api:app` serve the whole app with no separate dev server.
+_frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+if os.path.isdir(_frontend_dist):
+    app.mount("/", StaticFiles(directory=_frontend_dist, html=True), name="frontend")
