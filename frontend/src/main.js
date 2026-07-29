@@ -411,7 +411,7 @@ async function sendMessage(message, { viaVoice = false } = {}) {
     typing.row.remove();
     addRow(
       "system", null,
-      `⚠️ Couldn't reach the backend (${err.message}). Is "uvicorn api:app --reload --port 8000" running?`,
+      `⚠️ Couldn't reach the backend (${err.message}). Is "uvicorn api:app --reload --port 8010" running?`,
       { warn: true }
     );
     setBackendStatus(false);
