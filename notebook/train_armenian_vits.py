@@ -117,18 +117,27 @@ def main():
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"Training on device: {device}")
 
-    # Auto-resume: this is meant to run unattended across reboots (see the
-    # save_step comment above), so every invocation must pick up from the
-    # latest run's latest checkpoint instead of silently starting a fresh
-    # run from scratch each time it's relaunched. continue_path finds and
-    # restores the latest checkpoint (model + optimizer + scheduler state,
-    # plus the epoch/step counters) from an existing run dir on its own.
+    # Auto-resume: this is meant to run unattended across reboots/periodic
+    # supervisor restarts (see the save_step comment above), so every
+    # invocation must pick up from the latest run's latest checkpoint
+    # instead of silently starting a fresh run from scratch each time it's
+    # relaunched. continue_path finds and restores the latest checkpoint
+    # (model + optimizer + scheduler state, plus the epoch/step counters)
+    # from an existing run dir on its own -- but ONLY if that dir actually
+    # HAS a checkpoint. A run dir gets created the instant Trainer() is
+    # constructed, before the first save_step ever fires, so a run killed
+    # early (e.g. a restart racing a kill, exactly what happened once during
+    # testing) leaves a checkpoint-less dir that would otherwise crash the
+    # next launch with "No models found in continue path".
     existing_runs = sorted(
-        d for d in glob.glob(os.path.join(OUTPUT_PATH, "armenian_vits-*")) if os.path.isdir(d)
+        d for d in glob.glob(os.path.join(OUTPUT_PATH, "armenian_vits-*"))
+        if os.path.isdir(d) and glob.glob(os.path.join(d, "*.pth"))
     )
     continue_path = existing_runs[-1] if existing_runs else ""
     if continue_path:
         print(f"Resuming from latest run: {continue_path}")
+    else:
+        print("No checkpointed run found -- starting fresh.")
 
     trainer = Trainer(
         TrainerArgs(continue_path=continue_path),
