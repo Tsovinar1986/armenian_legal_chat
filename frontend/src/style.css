@@ -232,6 +232,19 @@ h1{
   transition:border-color .15s ease, color .15s ease;
 }
 .auth-signout:hover{ border-color:var(--border-soft); color:var(--ink); }
+.auth-delete{
+  background:transparent;
+  border:1px solid transparent;
+  color:var(--danger, #c0392b);
+  font-family:var(--font-body);
+  font-size:12.5px;
+  font-weight:600;
+  padding:7px 12px;
+  border-radius:10px;
+  cursor:pointer;
+  transition:border-color .15s ease, background .15s ease;
+}
+.auth-delete:hover{ border-color:var(--danger, #c0392b); background:rgba(192,57,43,0.08); }
 
 /* ---------- Console card ---------- */
 .console{

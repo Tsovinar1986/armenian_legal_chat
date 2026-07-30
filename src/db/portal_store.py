@@ -335,6 +335,35 @@ def get_chat_messages(session_id: str, session_type: str) -> List[Dict]:
         conn.close()
 
 
+def delete_user_account(user_id: int, chat_session_id: str) -> None:
+    """Deletes a user and everything tied to their account: every session
+    token (all devices, not just the one making this request), their chat
+    history, and any pending forgot-password OTP. Chat history isn't linked
+    to user_id directly -- logged-in accounts use a deterministic
+    session_id (see api.py's _account_session_id, the caller of this
+    function) instead of the random per-guest one, specifically so it can be
+    found and deleted here without a users<->chat_messages foreign key.
+    password_resets is keyed by the email/phone the user requested a reset
+    with (not user_id either), so it's looked up by this user's own email
+    and phone_number before the row disappears -- otherwise a leftover OTP
+    would still validate via reset-password (or silently block a future
+    account re-registering with the same email/phone) despite the account
+    it was issued for no longer existing."""
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT email, phone_number FROM users WHERE id = ?", (user_id,)).fetchone()
+        if row:
+            for identifier in (row["email"], row["phone_number"]):
+                if identifier:
+                    conn.execute("DELETE FROM password_resets WHERE identifier = ?", (identifier,))
+        conn.execute("DELETE FROM chat_messages WHERE session_id = ?", (chat_session_id,))
+        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def clear_chat_messages(session_id: str, session_type: str) -> None:
     """Wipe prior history for one session/type. Used when a new video upload
     starts a new case in the same session_id — without this, get_chat_messages

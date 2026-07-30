@@ -107,6 +107,24 @@ function revealConsole() {
 authRoleButtons.forEach((btn) => btn.addEventListener("click", () => setAuthRole(btn.dataset.role)));
 authTabButtons.forEach((btn) => btn.addEventListener("click", () => setAuthTab(btn.dataset.tab)));
 
+// Loads this account's past chat history (see api.py's _account_session_id)
+// into the transcript on sign-in/session-restore, so it's actually "cached"
+// across reloads and devices instead of starting blank every time despite
+// having a real account.
+async function loadAccountChatHistory() {
+  if (!sessionId) return;
+  try {
+    const res = await fetch(`/api/chat/${sessionId}`);
+    const data = await res.json();
+    for (const msg of data.messages || []) {
+      addRow(msg.role, msg.role === "user" ? "You" : "AI", msg.text);
+    }
+  } catch {
+    // Best-effort — an empty/missing history just means a fresh chat, same
+    // as a brand-new account.
+  }
+}
+
 function showSignedIn(user) {
   authUser = user;
   authSignedOut.hidden = true;
@@ -115,15 +133,34 @@ function showSignedIn(user) {
   authUserRole.textContent = user.role;
   authUserRoleIcon.textContent = ROLE_ICONS[user.role] || "👤";
   revealConsole();
+  loadAccountChatHistory();
+}
+
+// Removes every transcript row except the static greeting bubble — used so
+// a full log-out (see showSignedOut) doesn't leave a previous account's
+// messages sitting on screen once the console is shown again for whoever
+// signs in (or registers a guest session) next.
+function resetTranscript() {
+  transcript.querySelectorAll(".row").forEach((row) => {
+    if (row.querySelector("#greetingBubble")) return;
+    row.remove();
+  });
 }
 
 function showSignedOut() {
   authUser = null;
   authToken = null;
+  sessionId = null;
   localStorage.removeItem("legalAuthToken");
   localStorage.removeItem("legalAuthUser");
   authSignedOut.hidden = false;
   authSignedIn.hidden = true;
+  // Full log-out, not just clearing the token: hide the chat console itself
+  // (it only reappears via revealConsole on the next sign-in/guest) and wipe
+  // any messages already on screen, so it isn't still showing the previous
+  // account's conversation state behind the reopened auth card.
+  consoleEl.hidden = true;
+  resetTranscript();
 }
 
 async function restoreSession() {
@@ -142,6 +179,7 @@ async function restoreSession() {
     const data = await res.json();
     if (data.success) {
       authToken = token;
+      sessionId = data.chat_session_id;
       showSignedIn(JSON.parse(storedUser));
     } else {
       showSignedOut();
@@ -149,14 +187,18 @@ async function restoreSession() {
   } catch {
     // Backend unreachable at load time — keep the cached user so the UI
     // doesn't flash back to signed-out; checkBackend()'s poll will surface
-    // the outage separately via the header pill.
+    // the outage separately via the header pill. sessionId is left unset
+    // here (not stored locally) — it'll be filled in once /api/auth/me
+    // actually succeeds; until then a sent message would fall back to a
+    // fresh random session rather than this account's history.
     authToken = token;
     showSignedIn(JSON.parse(storedUser));
   }
 }
 
-function persistSession(token, user) {
+function persistSession(token, user, chatSessionId) {
   authToken = token;
+  sessionId = chatSessionId;
   localStorage.setItem("legalAuthToken", token);
   localStorage.setItem("legalAuthUser", JSON.stringify(user));
   showSignedIn(user);
@@ -179,7 +221,7 @@ signinForm.addEventListener("submit", async (e) => {
       setAuthMessage(data.message || "Sign in failed.", "error");
       return;
     }
-    persistSession(data.token, data.user);
+    persistSession(data.token, data.user, data.chat_session_id);
     setAuthMessage("");
     signinForm.reset();
   } catch (err) {
@@ -210,7 +252,7 @@ registerForm.addEventListener("submit", async (e) => {
       setAuthMessage(data.message || "Sign up failed.", "error");
       return;
     }
-    persistSession(data.token, data.user);
+    persistSession(data.token, data.user, data.chat_session_id);
     setAuthMessage("");
     registerForm.reset();
   } catch (err) {
@@ -235,6 +277,31 @@ authSignOutBtn.addEventListener("click", async () => {
     } catch {
       // Best-effort — still clear the local session below even if this fails.
     }
+  }
+  showSignedOut();
+});
+
+const authDeleteBtn = document.getElementById("authDeleteBtn");
+authDeleteBtn.addEventListener("click", async () => {
+  if (!authToken) return;
+  const confirmed = window.confirm(
+    "Delete your account? This permanently removes your account and chat history and can't be undone."
+  );
+  if (!confirmed) return;
+
+  try {
+    const res = await fetch("/api/auth/account", {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${authToken}` },
+    });
+    const data = await res.json();
+    if (!data.success) {
+      window.alert(data.message || "Couldn't delete the account.");
+      return;
+    }
+  } catch (err) {
+    window.alert(`Couldn't reach the backend (${err.message}).`);
+    return;
   }
   showSignedOut();
 });

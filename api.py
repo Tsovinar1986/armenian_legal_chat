@@ -1123,6 +1123,15 @@ async def health():
     return {"status": "ok"}
 
 
+def _account_session_id(user_id: int) -> str:
+    """The chat history session_id a logged-in user's messages are stored
+    under, instead of the random per-guest uuid /api/chat otherwise
+    generates -- deterministic on user_id so history is found again (the
+    "cache") across reloads/devices on login, and so it can be located and
+    wiped by delete_user_account on account deletion."""
+    return f"user_{user_id}"
+
+
 @app.post("/api/auth/register")
 async def register(request: RegisterRequest):
     existing = portal_store.find_user(email=request.email, phone_number=request.phone_number or None)
@@ -1138,7 +1147,10 @@ async def register(request: RegisterRequest):
         license_number=request.license_number or "",
     )
     token = portal_store.create_session(user["id"], user["role"])
-    return {"success": True, "message": "Registered successfully", "user": user, "token": token}
+    return {
+        "success": True, "message": "Registered successfully", "user": user, "token": token,
+        "chat_session_id": _account_session_id(user["id"]),
+    }
 
 
 @app.post("/api/auth/login")
@@ -1147,7 +1159,10 @@ async def login(request: LoginRequest):
     if not user:
         return {"success": False, "message": "Account not found or password is incorrect"}
     token = portal_store.create_session(user["id"], user["role"])
-    return {"success": True, "message": "Signed in successfully", "user": user, "token": token}
+    return {
+        "success": True, "message": "Signed in successfully", "user": user, "token": token,
+        "chat_session_id": _account_session_id(user["id"]),
+    }
 
 
 class LogoutRequest(BaseModel):
@@ -1172,7 +1187,28 @@ async def get_current_session(request: Request):
     session = portal_store.get_session(token)
     if not session:
         return {"success": False, "message": "Invalid or expired session"}
-    return {"success": True, "user_id": session["user_id"], "role": session["role"]}
+    return {
+        "success": True, "user_id": session["user_id"], "role": session["role"],
+        "chat_session_id": _account_session_id(session["user_id"]),
+    }
+
+
+@app.delete("/api/auth/account")
+async def delete_account(request: Request):
+    """Permanently deletes the signed-in user's account: every session token
+    (all devices), and their chat history (see _account_session_id/
+    delete_user_account) along with the user row itself. Irreversible --
+    there's no confirmation step here since the frontend already gates this
+    behind its own confirm dialog."""
+    auth_header = request.headers.get("authorization", "")
+    token = auth_header[7:] if auth_header.lower().startswith("bearer ") else ""
+    session = portal_store.get_session(token)
+    if not session:
+        return {"success": False, "message": "Invalid or expired session"}
+    await run_in_threadpool(
+        portal_store.delete_user_account, session["user_id"], _account_session_id(session["user_id"])
+    )
+    return {"success": True, "message": "Account deleted"}
 
 
 @app.post("/api/auth/forgot-password")
