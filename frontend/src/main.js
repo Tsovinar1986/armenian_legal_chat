@@ -62,6 +62,18 @@ const registerForm = document.getElementById("registerForm");
 const registerLicense = document.getElementById("registerLicense");
 const guestPanel = document.getElementById("guestPanel");
 const authGuestBtn = document.getElementById("authGuestBtn");
+const authGuestActive = document.getElementById("authGuestActive");
+const authGuestLogoutBtn = document.getElementById("authGuestLogoutBtn");
+const guestTabButton = authCard.querySelector('.auth-tab[data-tab="guest"]');
+const forgotPasswordLink = document.getElementById("forgotPasswordLink");
+const forgotPanel = document.getElementById("forgotPanel");
+const forgotIdentifier = document.getElementById("forgotIdentifier");
+const forgotSendBtn = document.getElementById("forgotSendBtn");
+const forgotResetRow = document.getElementById("forgotResetRow");
+const forgotOtp = document.getElementById("forgotOtp");
+const forgotNewPassword = document.getElementById("forgotNewPassword");
+const forgotResetBtn = document.getElementById("forgotResetBtn");
+const forgotMessage = document.getElementById("forgotMessage");
 const authMessage = document.getElementById("authMessage");
 const authUserName = document.getElementById("authUserName");
 const authUserRole = document.getElementById("authUserRole");
@@ -71,6 +83,12 @@ const consoleEl = document.querySelector(".console");
 
 const ROLE_LABELS = { individual: "Individual", lawyer: "Lawyer" };
 const ROLE_ICONS = { individual: "🙋", lawyer: "⚖️" };
+
+// 8-12 characters, at least one lowercase, one uppercase, one digit, and one
+// symbol — shared by the Sign Up password field and the forgot-password
+// reset field so both enforce the same "strong" bar.
+const STRONG_PASSWORD_RE = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,12}$/;
+const PASSWORD_HINT = "Password must be 8-12 characters with upper & lower case, a number, and a symbol.";
 
 let authRole = "individual";
 let authTab = "signin";
@@ -89,6 +107,10 @@ function setAuthRole(role) {
   authRoleLabels.forEach((el) => (el.textContent = ROLE_LABELS[role]));
   registerLicense.hidden = role !== "lawyer";
   registerLicense.required = role === "lawyer";
+  // Guest access is individual-only -- a lawyer account always needs to be
+  // a real, verified account, so lawyers only get Sign In / Sign Up.
+  guestTabButton.hidden = role === "lawyer";
+  if (role === "lawyer" && authTab === "guest") setAuthTab("signin");
 }
 
 function setAuthTab(tab) {
@@ -97,7 +119,12 @@ function setAuthTab(tab) {
   signinForm.hidden = tab !== "signin";
   registerForm.hidden = tab !== "register";
   guestPanel.hidden = tab !== "guest";
+  // Forgot-password is reached from the Sign In tab only -- collapse it
+  // (and any in-progress reset state) whenever a different tab is chosen.
+  forgotPanel.hidden = true;
+  forgotResetRow.hidden = true;
   setAuthMessage("");
+  forgotMessage.textContent = "";
 }
 
 function revealConsole() {
@@ -168,7 +195,8 @@ async function restoreSession() {
   const storedUser = localStorage.getItem("legalAuthUser");
   if (!token || !storedUser) {
     if (sessionStorage.getItem("legalAuthGuest") === "1") {
-      authCard.hidden = true;
+      authSignedOut.hidden = true;
+      authGuestActive.hidden = false;
       revealConsole();
     }
     return;
@@ -229,6 +257,76 @@ signinForm.addEventListener("submit", async (e) => {
   }
 });
 
+// ---------- Forgot password (Sign In tab, works for either role since
+// lookup is by email/phone, not role) -> /api/auth/forgot-password + reset-password ----------
+
+forgotPasswordLink.addEventListener("click", (e) => {
+  e.preventDefault();
+  forgotPanel.hidden = !forgotPanel.hidden;
+  if (forgotPanel.hidden) {
+    forgotResetRow.hidden = true;
+    forgotMessage.textContent = "";
+  } else {
+    forgotIdentifier.value = document.getElementById("signinIdentifier").value.trim();
+  }
+});
+
+forgotSendBtn.addEventListener("click", async () => {
+  const identifier = forgotIdentifier.value.trim();
+  if (!identifier) {
+    forgotMessage.textContent = "Enter your email or phone first.";
+    return;
+  }
+  forgotMessage.textContent = "Sending…";
+  try {
+    const res = await fetch("/api/auth/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, channel: "email" }),
+    });
+    const data = await res.json();
+    // This demo backend has no real email/SMS sender -- it hands the OTP
+    // straight back in the response, so surface it here too (data.otp)
+    // instead of leaving the flow a dead end with nowhere the code
+    // actually arrives.
+    forgotMessage.textContent = data.otp ? `${data.message} — code: ${data.otp}` : data.message;
+    if (data.success) forgotResetRow.hidden = false;
+  } catch (err) {
+    forgotMessage.textContent = `Couldn't reach the backend (${err.message}).`;
+  }
+});
+
+forgotResetBtn.addEventListener("click", async () => {
+  const identifier = forgotIdentifier.value.trim();
+  const otp = forgotOtp.value.trim();
+  const newPassword = forgotNewPassword.value;
+  if (!identifier || !otp || !newPassword) {
+    forgotMessage.textContent = "Fill in the email/phone, code, and new password.";
+    return;
+  }
+  if (!STRONG_PASSWORD_RE.test(newPassword)) {
+    forgotMessage.textContent = PASSWORD_HINT;
+    return;
+  }
+  forgotMessage.textContent = "Resetting…";
+  try {
+    const res = await fetch("/api/auth/reset-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier, otp, new_password: newPassword }),
+    });
+    const data = await res.json();
+    forgotMessage.textContent = data.message;
+    if (data.success) {
+      forgotOtp.value = "";
+      forgotNewPassword.value = "";
+      forgotResetRow.hidden = true;
+    }
+  } catch (err) {
+    forgotMessage.textContent = `Couldn't reach the backend (${err.message}).`;
+  }
+});
+
 registerForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const payload = {
@@ -239,6 +337,10 @@ registerForm.addEventListener("submit", async (e) => {
     role: authRole,
     license_number: authRole === "lawyer" ? registerLicense.value.trim() : null,
   };
+  if (!STRONG_PASSWORD_RE.test(payload.password)) {
+    setAuthMessage(PASSWORD_HINT, "error");
+    return;
+  }
   setAuthMessage("Creating your account…");
 
   try {
@@ -260,10 +362,21 @@ registerForm.addEventListener("submit", async (e) => {
   }
 });
 
-authGuestBtn.addEventListener("click", () => {
-  authCard.hidden = true;
+function enterGuestMode() {
+  authSignedOut.hidden = true;
+  authGuestActive.hidden = false;
   sessionStorage.setItem("legalAuthGuest", "1");
   revealConsole();
+}
+
+authGuestBtn.addEventListener("click", enterGuestMode);
+
+authGuestLogoutBtn.addEventListener("click", () => {
+  sessionStorage.removeItem("legalAuthGuest");
+  authGuestActive.hidden = true;
+  authSignedOut.hidden = false;
+  consoleEl.hidden = true;
+  resetTranscript();
 });
 
 authSignOutBtn.addEventListener("click", async () => {

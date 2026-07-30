@@ -47,7 +47,7 @@ def _fix_known_mishearings(text: str) -> str:
     return text
 
 
-def sanitize_transcript(text: str, language: str = "hy") -> str:
+def sanitize_transcript(text: str, language: str = "hy", filter_repetition: bool = True) -> str:
     """Drop empty/near-empty or junk that recognize_google occasionally
     returns for silence or noise. Shared by VoiceService (mic loop) and
     api.py's /api/speech-to-text (browser-recorded audio) so both entry
@@ -58,6 +58,16 @@ def sanitize_transcript(text: str, language: str = "hy") -> str:
     the transcript is long" check only makes sense when hy-AM is actually
     the language being recognized — applying it to en/ru transcripts would
     silently drop every short, valid "Hello"/"Привет"-style utterance.
+
+    filter_repetition=False skips the repetition checks — set by api.py's
+    video-upload transcription (see _transcribe_video_audio), where a sung
+    audio track legitimately produces the exact shape these checks were
+    built to reject as noise (a short word repeated 3+ times: "la la la",
+    "na na na na", "yes yes yes"). Wiping those in a video's actual lyrics
+    instead of a mic's silence artifact was a real bug, not just an edge
+    case — Whisper's own decoding is already tuned to resist repetition
+    loops (condition_on_previous_text=False, see _whisper_transcribe), so
+    this check is redundant there anyway.
     """
     cleaned = text.strip()
     if not cleaned:
@@ -69,15 +79,16 @@ def sanitize_transcript(text: str, language: str = "hy") -> str:
 
     cleaned = _fix_known_mishearings(cleaned)
 
-    lower = cleaned.lower()
-    tokens = re.findall(r"[\wЀ-ӿ]+", lower)
+    if filter_repetition:
+        lower = cleaned.lower()
+        tokens = re.findall(r"[\wЀ-ӿ]+", lower)
 
-    if len(tokens) >= 3 and len(set(tokens)) == 1 and len(tokens[0]) <= 3:
-        return ""
-
-    if len(tokens) >= 3 and all(len(t) <= 3 for t in tokens):
-        if len(set(tokens)) == 2 and len(tokens) == 3:
+        if len(tokens) >= 3 and len(set(tokens)) == 1 and len(tokens[0]) <= 3:
             return ""
+
+        if len(tokens) >= 3 and all(len(t) <= 3 for t in tokens):
+            if len(set(tokens)) == 2 and len(tokens) == 3:
+                return ""
 
     if language == "hy" and not re.search(r'[ա-ֆԱ-Ֆ]', cleaned):
         if len(cleaned) < 20:

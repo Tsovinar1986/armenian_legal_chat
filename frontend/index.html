@@ -30,20 +30,39 @@
       <div class="auth-tabs" id="authTabs" role="tablist">
         <button class="auth-tab active" data-tab="signin" type="button">Sign In</button>
         <button class="auth-tab" data-tab="register" type="button">Sign Up</button>
-        <button class="auth-tab" data-tab="guest" type="button">Guest</button>
+        <button class="auth-tab" data-tab="guest" data-role-only="individual" type="button">Guest</button>
       </div>
 
       <form class="auth-form" id="signinForm">
         <input id="signinIdentifier" type="text" placeholder="Email or phone" autocomplete="username" required />
         <input id="signinPassword" type="password" placeholder="Password" autocomplete="current-password" required />
         <button class="auth-submit" type="submit">Sign in as <span class="authRoleLabel">Individual</span></button>
+        <div class="auth-links"><a href="#" id="forgotPasswordLink">Forgot password?</a></div>
       </form>
+
+      <div class="auth-forgot-panel" id="forgotPanel" hidden>
+        <input id="forgotIdentifier" type="text" placeholder="Email or phone" autocomplete="username" />
+        <button class="auth-submit" id="forgotSendBtn" type="button">Send reset code</button>
+        <div class="auth-forgot-reset" id="forgotResetRow" hidden>
+          <input id="forgotOtp" type="text" placeholder="Reset code" autocomplete="one-time-code" />
+          <input
+            id="forgotNewPassword" type="password" placeholder="New password (8-12 chars, strong)"
+            autocomplete="new-password" minlength="8" maxlength="12"
+          />
+          <button class="auth-submit" id="forgotResetBtn" type="button">Reset password</button>
+        </div>
+        <div class="auth-message" id="forgotMessage"></div>
+      </div>
 
       <form class="auth-form" id="registerForm" hidden>
         <input id="registerName" type="text" placeholder="Full name" autocomplete="name" required />
         <input id="registerEmail" type="email" placeholder="Email address" autocomplete="email" required />
         <input id="registerPhone" type="tel" placeholder="Phone number (optional)" autocomplete="tel" />
-        <input id="registerPassword" type="password" placeholder="Password" autocomplete="new-password" required />
+        <input
+          id="registerPassword" type="password" placeholder="Password (8-12 chars, strong)"
+          autocomplete="new-password" minlength="8" maxlength="12" required
+        />
+        <p class="auth-hint">8–12 characters, with upper &amp; lower case, a number, and a symbol.</p>
         <input id="registerLicense" type="text" placeholder="Bar license number" hidden />
         <button class="auth-submit" type="submit">Sign up as <span class="authRoleLabel">Individual</span></button>
       </form>
@@ -64,6 +83,14 @@
       </span>
       <button class="auth-signout" id="authSignOutBtn" type="button">Sign out</button>
       <button class="auth-delete" id="authDeleteBtn" type="button">Delete account</button>
+    </div>
+
+    <div class="auth-card-signedin" id="authGuestActive" hidden>
+      <span class="auth-user-pill">
+        <span>🙋</span>
+        <span>Guest</span>
+      </span>
+      <button class="auth-signout" id="authGuestLogoutBtn" type="button">Log out</button>
     </div>
   </div>
 

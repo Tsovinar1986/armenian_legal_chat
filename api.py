@@ -1132,8 +1132,19 @@ def _account_session_id(user_id: int) -> str:
     return f"user_{user_id}"
 
 
+# 8-12 chars, at least one lowercase, one uppercase, one digit, one symbol --
+# mirrors the frontend's STRONG_PASSWORD_RE (frontend/src/main.js) so
+# register/reset-password reject a weak password server-side even if a
+# request bypasses the browser form entirely, not just when the UI enforces it.
+_STRONG_PASSWORD_RE = re.compile(r"^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,12}$")
+_PASSWORD_HINT = "Password must be 8-12 characters with upper & lower case, a number, and a symbol."
+
+
 @app.post("/api/auth/register")
 async def register(request: RegisterRequest):
+    if not _STRONG_PASSWORD_RE.match(request.password):
+        return {"success": False, "message": _PASSWORD_HINT}
+
     existing = portal_store.find_user(email=request.email, phone_number=request.phone_number or None)
     if existing:
         return {"success": False, "message": "User already exists"}
@@ -1224,6 +1235,9 @@ async def forgot_password(request: ForgotPasswordRequest):
 
 @app.post("/api/auth/reset-password")
 async def reset_password(request: ResetPasswordRequest):
+    if not _STRONG_PASSWORD_RE.match(request.new_password):
+        return {"success": False, "message": _PASSWORD_HINT}
+
     reset_row = portal_store.get_password_reset(request.identifier)
     if not reset_row or reset_row["otp"] != request.otp:
         return {"success": False, "message": "Invalid OTP"}
@@ -1488,7 +1502,9 @@ def _whisper_join_transcript(result: dict) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _whisper_transcribe(audio_path: str, language: str = None, min_chars: int = 0) -> tuple[str, str]:
+def _whisper_transcribe(
+    audio_path: str, language: str = None, min_chars: int = 0, filter_repetition: bool = True
+) -> tuple[str, str]:
     """Transcribes an audio/video file with Whisper. `language` is an
     optional hint (Whisper's own ISO codes match this app's "hy"/"en"/"ru"
     exactly, no locale-string mapping needed like recognize_google's
@@ -1516,7 +1532,9 @@ def _whisper_transcribe(audio_path: str, language: str = None, min_chars: int = 
         fp16=False,
     )
     detected_language = result.get("language") or language or ""
-    text = sanitize_transcript(_whisper_join_transcript(result), language=detected_language)
+    text = sanitize_transcript(
+        _whisper_join_transcript(result), language=detected_language, filter_repetition=filter_repetition
+    )
     if text and len(text) >= min_chars:
         return text, detected_language
     return "", ""
@@ -1559,7 +1577,12 @@ def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, 
     wav_path = None
     try:
         wav_path = _extract_wav(video_path)
-        text, detected_language = _whisper_transcribe(wav_path, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS)
+        # filter_repetition=False: a sung track's repeated hook/chorus words
+        # ("la la la", "yes yes yes") are genuine lyrics here, not a mic's
+        # misheard-silence artifact — see sanitize_transcript's docstring.
+        text, detected_language = _whisper_transcribe(
+            wav_path, min_chars=MIN_VIDEO_TRANSCRIPT_CHARS, filter_repetition=False
+        )
         has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
         return text, has_nonspeech_audio, detected_language
     except Exception:

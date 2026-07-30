@@ -182,6 +182,29 @@ h1{
   margin:0 0 12px;
 }
 
+.auth-hint{
+  color:var(--muted-2);
+  font-size:11px;
+  line-height:1.4;
+  margin:-4px 0 0;
+}
+
+.auth-forgot-panel{ display:flex; flex-direction:column; gap:8px; margin-top:6px; }
+.auth-forgot-panel[hidden]{ display:none; }
+.auth-forgot-panel input{
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  color:var(--ink);
+  font-family:var(--font-body);
+  font-size:13.5px;
+  padding:10px 12px;
+  border-radius:10px;
+  width:100%;
+}
+.auth-forgot-panel input:focus{ outline:none; border-color:var(--accent); }
+.auth-forgot-reset{ display:flex; flex-direction:column; gap:8px; }
+.auth-forgot-reset[hidden]{ display:none; }
+
 .auth-message{
   text-align:center;
   font-size:12px;
