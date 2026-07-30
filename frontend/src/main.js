@@ -8,10 +8,6 @@ const btnSend = document.getElementById("btnSend");
 const btnMic = document.getElementById("btnMic");
 const btnUpload = document.getElementById("btnUpload");
 const fileInput = document.getElementById("fileInput");
-const btnLink = document.getElementById("btnLink");
-const linkRow = document.getElementById("linkRow");
-const videoLinkInput = document.getElementById("videoLinkInput");
-const btnLinkSubmit = document.getElementById("btnLinkSubmit");
 const consoleDot = document.getElementById("liveDot");
 const backendPill = document.getElementById("backendPill");
 const backendStatus = document.getElementById("backendStatus");
@@ -520,9 +516,6 @@ function setComposerEnabled(on) {
   btnSend.disabled = !on;
   btnMic.disabled = !on;
   btnUpload.disabled = !on;
-  btnLink.disabled = !on;
-  btnLinkSubmit.disabled = !on;
-  videoLinkInput.disabled = !on;
 }
 
 function setBackendStatus(online) {
@@ -704,12 +697,12 @@ btnMic.addEventListener("click", () => {
   }
 });
 
-// ---------- Upload: doc -> case DB, video (file or link) -> action/emotion + speech transcript ----------
+// ---------- Upload: doc -> case DB, video -> action/emotion + speech transcript ----------
 
 // Vision/Whisper models now warm up at backend startup (see api.py's
-// warm_up_legal_agent), not on the first request, but a slow yt-dlp
-// download or a genuinely stuck/dropped backend connection can still hang
-// the fetch indefinitely with no timeout — the browser's own network stack
+// warm_up_legal_agent), not on the first request, but a large video's
+// analysis time or a genuinely stuck/dropped backend connection can still
+// hang the fetch indefinitely with no timeout — the browser's own network stack
 // eventually gives up and throws its own opaque error (e.g. Safari's bare
 // "Load failed", with no indication of what happened or how long it waited).
 // Aborting ourselves first means the UI always shows a clear, actionable
@@ -820,59 +813,9 @@ fileInput.addEventListener("change", async () => {
   }
 });
 
-// ---------- Video link (YouTube / TikTok / Instagram / etc. via /api/upload-link) ----------
-
-btnLink.addEventListener("click", () => {
-  if (busy) return;
-  const showing = !linkRow.hidden;
-  linkRow.hidden = showing;
-  if (!showing) videoLinkInput.focus();
-});
-
-async function submitVideoLink() {
-  const url = videoLinkInput.value.trim();
-  if (!url || busy) return;
-
-  setComposerEnabled(false);
-  const working = addRow(
-    "system", null,
-    `🔗 Downloading and analyzing ${url}… (can take a while depending on the video's length)`
-  );
-
-  try {
-    const form = new FormData();
-    form.append("url", url);
-    form.append("language", currentLanguage);
-    if (sessionId) form.append("session_id", sessionId);
-
-    const res = await fetchWithTimeout("/api/upload-link", { method: "POST", body: form });
-    const data = await res.json();
-    working.row.remove();
-
-    if (!res.ok || data.success === false) {
-      addRow("system", null, data.message || `HTTP ${res.status}`, { warn: true });
-    } else {
-      renderVideoAnalysisRow(data);
-      videoLinkInput.value = "";
-      linkRow.hidden = true;
-    }
-  } catch (err) {
-    working.row.remove();
-    addRow("system", null, `⚠️ Video link analysis failed: ${err.message}`, { warn: true });
-  } finally {
-    setComposerEnabled(true);
-  }
-}
-
-btnLinkSubmit.addEventListener("click", submitVideoLink);
-videoLinkInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") submitVideoLink();
-});
-
 document.addEventListener("keydown", (e) => {
-  if (document.activeElement === typedInput || document.activeElement === videoLinkInput) return;
+  if (document.activeElement === typedInput) return;
   if (e.key === "t") typedInput.focus();
   if (e.key === "m") btnMic.click();
   if (e.key === "u") btnUpload.click();
-  if (e.key === "l") btnLink.click();
 });

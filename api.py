@@ -176,8 +176,8 @@ async def warm_up_legal_agent():
     # _WHISPER_MODEL_SIZE) re-verifies its full checkpoint's SHA256 on every
     # cold load, which alone can run past a minute even with the weights
     # already cached on disk. Stacked with YOLO/MediaPipe's own cold-load,
-    # that easily pushed a first /api/upload or /api/upload-link request
-    # past the browser's own patience for a hanging fetch (surfaced as
+    # that easily pushed a first /api/upload request past the browser's own
+    # patience for a hanging fetch (surfaced as
     # Safari's opaque "Load failed", with no indication anything was even
     # in progress). Warming both here instead moves that one-time cost to
     # server boot, where a slow startup is expected, instead of ambushing
@@ -1473,8 +1473,8 @@ def _extract_wav(src_path: str, timeout: int = 60) -> str:
 # revisiting.
 _WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "medium")
 _whisper_model = None
-# One shared Whisper model instance serves every request (mic, video upload,
-# video link), each dispatched to a threadpool worker by FastAPI/Starlette --
+# One shared Whisper model instance serves every request (mic, video upload),
+# each dispatched to a threadpool worker by FastAPI/Starlette --
 # so two transcriptions can genuinely run concurrently on two threads against
 # the *same* torch model object. openai-whisper's model.transcribe isn't
 # documented as thread-safe for concurrent calls, and this surfaced as a real
@@ -1620,10 +1620,8 @@ def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, 
 
 async def _analyze_video_upload(tmp_path: str, filename: str, language: str, session_id: str) -> dict:
     """Runs the vision + speech-to-text analysis pipeline on a local video
-    file and, when session_id is given, appends a summary to that chat
-    session. Shared by /api/upload's video branch and /api/upload-link
-    (video URLs downloaded via yt-dlp), so both entry points produce
-    identical results once a local file exists on disk."""
+    file uploaded via /api/upload, and, when session_id is given, appends a
+    summary to that chat session."""
     vision_service = get_vision_service()
     result = await run_in_threadpool(vision_service.analyze_video_headless, tmp_path, 12, language)
     transcript, has_nonspeech_audio, detected_language = await run_in_threadpool(
@@ -1756,141 +1754,6 @@ async def upload_file(
     finally:
         if tmp_path and os.path.exists(tmp_path):
             os.remove(tmp_path)
-
-
-# Cap on a linked video's length before it's even downloaded — this pipeline
-# only samples up to 12 frames regardless of video length, so a multi-hour
-# link buys no analysis benefit, only a slow/expensive download.
-MAX_VIDEO_LINK_DURATION_SECONDS = 20 * 60
-
-
-def _video_file_has_audio_stream(video_path: str, timeout: int = 30) -> bool:
-    """ffprobe check: does this downloaded file actually contain an audio
-    stream? Used by _download_video_from_url — see its docstring for why
-    this matters (some yt-dlp format listings claim an audio codec that the
-    actual downloaded stream doesn't contain)."""
-    try:
-        proc = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "a",
-             "-show_entries", "stream=index", "-of", "csv=p=0", video_path],
-            capture_output=True, text=True, timeout=timeout,
-        )
-        return bool(proc.stdout.strip())
-    except Exception:
-        return False
-
-
-def _download_video_from_url(url: str) -> str:
-    """Downloads a video from a YouTube/TikTok/Instagram/etc. link (any site
-    yt-dlp supports) into a fresh temp directory, so it can be run through
-    the exact same analysis pipeline as an uploaded file
-    (_analyze_video_upload). Checks the video's duration via yt-dlp's
-    metadata-only extraction *before* downloading anything, and rejects
-    anything over MAX_VIDEO_LINK_DURATION_SECONDS. The download itself is
-    capped to a modest resolution (this pipeline downscales to 960px width
-    internally anyway, and speech-to-text only needs the audio track) to
-    keep it fast and small.
-
-    Tries a short list of format selectors in order, verifying with ffprobe
-    that the downloaded file actually has an audio stream before accepting
-    it — checked against a real TikTok video, yt-dlp's format listing
-    claimed every available format included AAC audio, but the actual
-    highest-resolution CDN variant "best" resolved to was silently
-    video-only, silently producing a video the speech pipeline could never
-    find any words in no matter how good the classifier logic downstream
-    was. `download` (TikTok's own default, watermarked link) is tried last
-    specifically because it reliably included real audio in that test, as a
-    fallback for whatever site-specific quirk causes the first format to
-    come up silent. If every attempt downloads but none has audio (e.g. the
-    video is genuinely silent), the last successful download is still
-    returned — the vision analysis half of the pipeline doesn't need audio,
-    so a video-only file is a worse-than-ideal result, not a failure.
-
-    Returns the local path to the downloaded video file."""
-    import yt_dlp
-
-    # socket_timeout/retries bound how long a stalled or rate-limited host
-    # (Instagram in particular routinely stalls or resets connections for
-    # unauthenticated requests) can hang this call — without them a bad
-    # network condition here blocks the request indefinitely, which is what
-    # eventually surfaces to the browser as an opaque "Load failed" instead
-    # of the clear JSON error message the except block below would return.
-    NETWORK_OPTS = {"socket_timeout": 20, "retries": 3, "fragment_retries": 3}
-
-    probe_opts = {"quiet": True, "no_warnings": True, "skip_download": True, **NETWORK_OPTS}
-    with yt_dlp.YoutubeDL(probe_opts) as ydl:
-        info = ydl.extract_info(url, download=False)
-    duration = info.get("duration") or 0
-    if duration and duration > MAX_VIDEO_LINK_DURATION_SECONDS:
-        raise ValueError(
-            f"Video is {duration // 60} min long — linked videos are limited to "
-            f"{MAX_VIDEO_LINK_DURATION_SECONDS // 60} min."
-        )
-
-    tmp_dir = tempfile.mkdtemp(prefix="video_link_")
-    format_attempts = ["best[height<=480]/best", "download"]
-
-    downloaded_path = None
-    for i, fmt in enumerate(format_attempts):
-        # Each attempt gets its own output filename (attempt0_/attempt1_...)
-        # — reusing the same path across attempts made yt-dlp silently skip
-        # re-downloading when a file already existed there from the
-        # previous (audio-less) attempt, defeating the whole fallback.
-        download_opts = {
-            "quiet": True,
-            "no_warnings": True,
-            "outtmpl": os.path.join(tmp_dir, f"attempt{i}_%(id)s.%(ext)s"),
-            "format": fmt,
-            "merge_output_format": "mp4",
-            **NETWORK_OPTS,
-        }
-        try:
-            with yt_dlp.YoutubeDL(download_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                candidate = ydl.prepare_filename(info)
-        except Exception:
-            continue  # this format isn't available/failed -- try the next one
-
-        if not os.path.exists(candidate):
-            # merge_output_format can change the actual extension (e.g. a
-            # separately-downloaded webm video+audio pair gets merged into .mp4).
-            candidate = os.path.splitext(candidate)[0] + ".mp4"
-        if not os.path.exists(candidate):
-            continue
-
-        downloaded_path = candidate  # keep as best-so-far even if audio-less
-        if _video_file_has_audio_stream(candidate):
-            return downloaded_path
-
-    if downloaded_path is None:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-        raise RuntimeError("Download completed but the output file wasn't found.")
-    return downloaded_path
-
-
-@app.post("/api/upload-link")
-async def upload_video_link(
-    url: str = Form(...),
-    language: str = Form("hy"),
-    session_id: str = Form(None),
-):
-    """Same video analysis pipeline as /api/upload's video branch
-    (_analyze_video_upload), but for a YouTube/TikTok/Instagram/etc. link
-    instead of a local file: downloads the video via yt-dlp first, then
-    reuses the exact same analysis + summary + session-append logic so both
-    entry points behave identically."""
-    if not url or not url.strip():
-        return {"success": False, "message": "No video URL was given."}
-
-    tmp_path = None
-    try:
-        tmp_path = await run_in_threadpool(_download_video_from_url, url.strip())
-        return await _analyze_video_upload(tmp_path, os.path.basename(tmp_path), language, session_id)
-    except Exception as exc:
-        return {"success": False, "message": f"Could not process video link: {exc}"}
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            shutil.rmtree(os.path.dirname(tmp_path), ignore_errors=True)
 
 
 @app.post("/api/speech-to-text")
