@@ -9,6 +9,11 @@ import { defineConfig } from "vite";
 // of failing loudly.
 export default defineConfig({
   server: {
+    port: 5171,
+    // Without this, an already-occupied 5171 makes Vite silently fall back
+    // to the next free port (5172, 5173, ...) instead of erroring -- easy
+    // to miss and then wonder why localhost:5171 isn't loading anything.
+    strictPort: true,
     proxy: {
       "/api": "http://localhost:8010",
       "/health": "http://localhost:8010",
