@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 import wave
 from collections import defaultdict
@@ -1472,17 +1473,34 @@ def _extract_wav(src_path: str, timeout: int = 60) -> str:
 # revisiting.
 _WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "medium")
 _whisper_model = None
+# One shared Whisper model instance serves every request (mic, video upload,
+# video link), each dispatched to a threadpool worker by FastAPI/Starlette --
+# so two transcriptions can genuinely run concurrently on two threads against
+# the *same* torch model object. openai-whisper's model.transcribe isn't
+# documented as thread-safe for concurrent calls, and this surfaced as a real
+# bug: a video with clearly audible narration coming back with an empty
+# transcript (no exception, no error -- just silently wrong) whenever a
+# second transcription request landed while one was already in flight.
+# Serializing here trades "two callers run at once" for "two callers get a
+# correct answer, one after the other" -- the right tradeoff since a wrong
+# answer is worse than a queued one.
+_whisper_lock = threading.Lock()
 
 
 def _get_whisper_model():
     """Lazy-loaded so the server starts instantly and never pays this cost
     if no request ever needs speech-to-text — same pattern as
-    get_vision_service()/_get_audio_event_classifier()."""
+    get_vision_service()/_get_audio_event_classifier(). Guarded by
+    _whisper_lock too, not just the transcribe call in _whisper_transcribe --
+    without it, two concurrent first-ever calls could both see
+    _whisper_model as None and each load their own model instance."""
     global _whisper_model
     if _whisper_model is None:
-        import whisper
-        print(f"🗣️ Loading Whisper speech-to-text model ({_WHISPER_MODEL_SIZE}) on first use...")
-        _whisper_model = whisper.load_model(_WHISPER_MODEL_SIZE)
+        with _whisper_lock:
+            if _whisper_model is None:
+                import whisper
+                print(f"🗣️ Loading Whisper speech-to-text model ({_WHISPER_MODEL_SIZE}) on first use...")
+                _whisper_model = whisper.load_model(_WHISPER_MODEL_SIZE)
     return _whisper_model
 
 
@@ -1524,13 +1542,14 @@ def _whisper_transcribe(
     recognized (post sanitize_transcript + min_chars, matching
     _recognize_wav's contract)."""
     model = _get_whisper_model()
-    result = model.transcribe(
-        audio_path,
-        language=language or None,
-        no_speech_threshold=0.3,
-        condition_on_previous_text=False,
-        fp16=False,
-    )
+    with _whisper_lock:
+        result = model.transcribe(
+            audio_path,
+            language=language or None,
+            no_speech_threshold=0.3,
+            condition_on_previous_text=False,
+            fp16=False,
+        )
     detected_language = result.get("language") or language or ""
     text = sanitize_transcript(
         _whisper_join_transcript(result), language=detected_language, filter_repetition=filter_repetition
@@ -1585,7 +1604,13 @@ def _transcribe_video_audio(video_path: str, language: str) -> tuple[str, bool, 
         )
         has_nonspeech_audio = (not text) and _wav_has_audio_content(wav_path)
         return text, has_nonspeech_audio, detected_language
-    except Exception:
+    except Exception as exc:
+        # Printed, not swallowed silently -- this used to come back
+        # indistinguishable from "genuinely no speech" (empty transcript,
+        # has_nonspeech_audio possibly False too), which hid real failures
+        # (e.g. ffmpeg/whisper errors) behind what looked like a normal,
+        # boring result instead of something worth investigating.
+        print(f"⚠️ Video transcription failed for {video_path}: {exc}")
         has_nonspeech_audio = bool(wav_path and os.path.exists(wav_path) and _wav_has_audio_content(wav_path))
         return "", has_nonspeech_audio, ""
     finally:
